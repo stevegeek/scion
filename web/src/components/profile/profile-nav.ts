@@ -65,6 +65,12 @@ export class ScionProfileNav extends LitElement {
   @property({ type: String })
   currentPath = '/profile';
 
+  @property({ type: Boolean, reflect: true })
+  collapsed = false;
+
+  @property({ type: Boolean })
+  hideCollapse = false;
+
   @state()
   private githubAppUrl: string | null = null;
 
@@ -101,6 +107,8 @@ export class ScionProfileNav extends LitElement {
       display: flex;
       flex-direction: column;
       overflow: hidden;
+      opacity: 1;
+      transition: opacity var(--scion-transition-normal, 250ms ease);
     }
 
     .logo-text h1 {
@@ -143,6 +151,13 @@ export class ScionProfileNav extends LitElement {
       flex-shrink: 0;
     }
 
+    .return-link span {
+      overflow: hidden;
+      white-space: nowrap;
+      opacity: 1;
+      transition: opacity var(--scion-transition-normal, 250ms ease);
+    }
+
     .user-info {
       padding: 1rem;
       border-bottom: 1px solid var(--scion-border, #e2e8f0);
@@ -171,6 +186,9 @@ export class ScionProfileNav extends LitElement {
       display: flex;
       flex-direction: column;
       min-width: 0;
+      overflow: hidden;
+      opacity: 1;
+      transition: opacity var(--scion-transition-normal, 250ms ease);
     }
 
     .user-name {
@@ -215,6 +233,10 @@ export class ScionProfileNav extends LitElement {
       color: var(--scion-text-muted, #64748b);
       margin-bottom: 0.5rem;
       padding: 0 0.75rem;
+      opacity: 1;
+      overflow: hidden;
+      white-space: nowrap;
+      transition: opacity var(--scion-transition-normal, 250ms ease);
     }
 
     .nav-list {
@@ -262,6 +284,8 @@ export class ScionProfileNav extends LitElement {
       overflow: hidden;
       text-overflow: ellipsis;
       white-space: nowrap;
+      opacity: 1;
+      transition: opacity var(--scion-transition-normal, 250ms ease);
     }
 
     .nav-link-external {
@@ -290,6 +314,139 @@ export class ScionProfileNav extends LitElement {
       font-size: 0.6875rem;
       margin-left: auto;
       opacity: 0.6;
+    }
+
+    /* Collapsed state */
+    :host {
+      transition: width var(--scion-transition-normal, 250ms ease);
+    }
+
+    :host([collapsed]) {
+      width: var(--scion-sidebar-collapsed-width, 64px);
+    }
+
+    :host([collapsed]) .logo {
+      justify-content: center;
+      padding: 1.25rem 0.5rem;
+    }
+
+    :host([collapsed]) .logo-text {
+      opacity: 0;
+      width: 0;
+      pointer-events: none;
+    }
+
+    :host([collapsed]) .return-link {
+      justify-content: center;
+      padding: 0.5rem;
+      margin: 0.5rem;
+      gap: 0;
+    }
+
+    :host([collapsed]) .return-link span {
+      opacity: 0;
+      width: 0;
+      overflow: hidden;
+      pointer-events: none;
+    }
+
+    :host([collapsed]) .user-info {
+      justify-content: center;
+      padding: 0.5rem;
+    }
+
+    :host([collapsed]) .user-details {
+      opacity: 0;
+      width: 0;
+      overflow: hidden;
+      pointer-events: none;
+    }
+
+    :host([collapsed]) .nav-container {
+      padding: 0.5rem 0.25rem;
+    }
+
+    :host([collapsed]) .nav-section-title {
+      opacity: 0;
+      height: 0;
+      margin: 0;
+      padding: 0;
+      pointer-events: none;
+    }
+
+    :host([collapsed]) .nav-link {
+      justify-content: center;
+      padding: 0.5rem;
+    }
+
+    :host([collapsed]) .nav-link-text {
+      opacity: 0;
+      width: 0;
+      pointer-events: none;
+    }
+
+    :host([collapsed]) .nav-link-external {
+      justify-content: center;
+      padding: 0.5rem;
+    }
+
+    :host([collapsed]) .nav-link-external .nav-link-text {
+      opacity: 0;
+      width: 0;
+      pointer-events: none;
+    }
+
+    :host([collapsed]) .nav-link-external .external-icon {
+      opacity: 0;
+      width: 0;
+      pointer-events: none;
+    }
+
+    /* Collapse toggle */
+    .collapse-toggle {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 0.75rem;
+      margin: 0.5rem;
+      padding: 0.5rem;
+      border: 1px solid var(--scion-border, #e2e8f0);
+      border-radius: 0.5rem;
+      background: transparent;
+      color: var(--scion-text-muted, #64748b);
+      cursor: pointer;
+      font-size: 0.875rem;
+      font-weight: 500;
+      transition: all 0.15s ease;
+    }
+
+    .collapse-toggle:hover {
+      background: var(--scion-bg-subtle, #f1f5f9);
+      color: var(--scion-text, #1e293b);
+    }
+
+    .collapse-toggle sl-icon {
+      font-size: 1.125rem;
+      flex-shrink: 0;
+      transition: transform var(--scion-transition-normal, 250ms ease);
+    }
+
+    :host([collapsed]) .collapse-toggle sl-icon {
+      transform: rotate(180deg);
+    }
+
+    .collapse-toggle-text {
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      opacity: 1;
+      transition: opacity var(--scion-transition-normal, 250ms ease);
+    }
+
+    :host([collapsed]) .collapse-toggle-text {
+      opacity: 0;
+      width: 0;
+      pointer-events: none;
     }
   `;
 
@@ -329,9 +486,9 @@ export class ScionProfileNav extends LitElement {
         </div>
       </div>
 
-      <a href="/" class="return-link">
+      <a href="/" class="return-link" aria-label="Return to Hub" title="Return to Hub">
         <sl-icon name="arrow-left-circle"></sl-icon>
-        Return to Hub
+        <span>Return to Hub</span>
       </a>
 
       ${this.user
@@ -388,7 +545,30 @@ export class ScionProfileNav extends LitElement {
           `
         )}
       </nav>
+
+      ${this.hideCollapse
+        ? ''
+        : html`
+            <button
+              class="collapse-toggle"
+              @click=${(): void => this.handleCollapseToggle()}
+              aria-label=${this.collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+              title=${this.collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+            >
+              <sl-icon name="chevron-left"></sl-icon>
+              <span class="collapse-toggle-text">Collapse</span>
+            </button>
+          `}
     `;
+  }
+
+  private handleCollapseToggle(): void {
+    this.dispatchEvent(
+      new CustomEvent('sidebar-toggle', {
+        bubbles: true,
+        composed: true,
+      })
+    );
   }
 
   private isActive(path: string): boolean {

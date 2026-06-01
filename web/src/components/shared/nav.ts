@@ -89,6 +89,12 @@ export class ScionNav extends LitElement {
   @property({ type: Boolean, reflect: true })
   collapsed = false;
 
+  /**
+   * Hide the collapse toggle (e.g. inside mobile drawer)
+   */
+  @property({ type: Boolean })
+  hideCollapse = false;
+
   static override styles = css`
     :host {
       display: flex;
@@ -126,10 +132,19 @@ export class ScionNav extends LitElement {
       display: flex;
       flex-direction: column;
       overflow: hidden;
+      opacity: 1;
+      transition: opacity var(--scion-transition-normal, 250ms ease);
+    }
+
+    :host([collapsed]) .logo {
+      justify-content: center;
+      padding: 1.25rem 0.5rem;
     }
 
     :host([collapsed]) .logo-text {
-      display: none;
+      opacity: 0;
+      width: 0;
+      pointer-events: none;
     }
 
     .logo-text h1 {
@@ -177,10 +192,22 @@ export class ScionNav extends LitElement {
       color: var(--scion-text-muted, #64748b);
       margin-bottom: 0.5rem;
       padding: 0 0.75rem;
+      opacity: 1;
+      overflow: hidden;
+      white-space: nowrap;
+      transition: opacity var(--scion-transition-normal, 250ms ease);
+    }
+
+    :host([collapsed]) .nav-container {
+      padding: 0.5rem 0.25rem;
     }
 
     :host([collapsed]) .nav-section-title {
-      display: none;
+      opacity: 0;
+      height: 0;
+      margin: 0;
+      padding: 0;
+      pointer-events: none;
     }
 
     .nav-list {
@@ -208,7 +235,7 @@ export class ScionNav extends LitElement {
 
     :host([collapsed]) .nav-link {
       justify-content: center;
-      padding: 0.75rem;
+      padding: 0.5rem;
     }
 
     .nav-link:hover {
@@ -233,12 +260,67 @@ export class ScionNav extends LitElement {
       overflow: hidden;
       text-overflow: ellipsis;
       white-space: nowrap;
+      opacity: 1;
+      transition: opacity var(--scion-transition-normal, 250ms ease);
     }
 
     :host([collapsed]) .nav-link-text {
-      display: none;
+      opacity: 0;
+      width: 0;
+      pointer-events: none;
     }
 
+    /* Collapse toggle */
+    .collapse-toggle {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 0.75rem;
+      margin: 0.5rem;
+      padding: 0.5rem;
+      border: 1px solid var(--scion-border, #e2e8f0);
+      border-radius: 0.5rem;
+      background: transparent;
+      color: var(--scion-text-muted, #64748b);
+      cursor: pointer;
+      font-size: 0.875rem;
+      font-weight: 500;
+      transition: all 0.15s ease;
+    }
+
+    .collapse-toggle:hover {
+      background: var(--scion-bg-subtle, #f1f5f9);
+      color: var(--scion-text, #1e293b);
+    }
+
+    .collapse-toggle sl-icon {
+      font-size: 1.125rem;
+      flex-shrink: 0;
+      transition: transform var(--scion-transition-normal, 250ms ease);
+    }
+
+    :host([collapsed]) .collapse-toggle sl-icon {
+      transform: rotate(180deg);
+    }
+
+    .collapse-toggle-text {
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      opacity: 1;
+      transition: opacity var(--scion-transition-normal, 250ms ease);
+    }
+
+    :host([collapsed]) .collapse-toggle-text {
+      opacity: 0;
+      width: 0;
+      pointer-events: none;
+    }
+
+    /* Smooth width transition */
+    :host {
+      transition: width var(--scion-transition-normal, 250ms ease);
+    }
   `;
 
   override render() {
@@ -301,6 +383,20 @@ export class ScionNav extends LitElement {
             `
           : ''}
       </nav>
+
+      ${this.hideCollapse
+        ? ''
+        : html`
+            <button
+              class="collapse-toggle"
+              @click=${(): void => this.handleCollapseToggle()}
+              aria-label=${this.collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+              title=${this.collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+            >
+              <sl-icon name="chevron-left"></sl-icon>
+              <span class="collapse-toggle-text">Collapse</span>
+            </button>
+          `}
     `;
   }
 
@@ -314,11 +410,15 @@ export class ScionNav extends LitElement {
     return this.currentPath.startsWith(path);
   }
 
-  /**
-   * Handle navigation link click.
-   * Prevents default browser navigation and dispatches a custom event
-   * so the client-side router can handle it without a full page reload.
-   */
+  private handleCollapseToggle(): void {
+    this.dispatchEvent(
+      new CustomEvent('sidebar-toggle', {
+        bubbles: true,
+        composed: true,
+      })
+    );
+  }
+
   private handleNavClick(e: Event, path: string): void {
     e.preventDefault();
     // Dispatch a custom event for the app shell and router to handle
