@@ -61,7 +61,7 @@ gcloud compute ssh "${INSTANCE_NAME}" \
             echo \"Repository /home/scion/scion already exists, fetching latest...\"
             sudo -u scion sh -c 'cd /home/scion/scion && git fetch origin && git reset --hard origin/HEAD'
         else
-            if [ -e \"/home/scion/scion\" ]; then
+            if sudo test -e \"/home/scion/scion\"; then
                 echo \"Removing existing non-git path /home/scion/scion...\"
                 sudo rm -rf /home/scion/scion
             fi
