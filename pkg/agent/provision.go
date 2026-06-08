@@ -29,6 +29,7 @@ import (
 	"github.com/GoogleCloudPlatform/scion/pkg/api"
 	"github.com/GoogleCloudPlatform/scion/pkg/config"
 	"github.com/GoogleCloudPlatform/scion/pkg/harness"
+	"github.com/GoogleCloudPlatform/scion/pkg/provision"
 	"github.com/GoogleCloudPlatform/scion/pkg/util"
 )
 
@@ -63,10 +64,13 @@ func DeleteAgentFiles(agentName string, projectPath string, removeBranch bool) (
 			}
 		}
 
-		// Fallback: resolve repo root from the project's parent directory
-		// (clone-per-agent layout where each agent workspace is a full clone).
+		// Fallback: resolve repo root from projectDir itself. Passing projectDir
+		// (not its parent) is robust for both local projects (where projectDir is
+		// the repo root) and hub-managed projects (where it is the .scion subdir).
+		// MUST match the base used at sharer registration (ProvisionAgent), or the
+		// refcount lookup (FindBranchForAgent/UnregisterSharer) would miss.
 		if repoRoot == "" {
-			if root, err := util.RepoRootDir(filepath.Dir(projectDir)); err == nil {
+			if root, err := util.RepoRootDir(projectDir); err == nil {
 				repoRoot = root
 			}
 		}
@@ -86,10 +90,64 @@ func DeleteAgentFiles(agentName string, projectPath string, removeBranch bool) (
 	// in a goroutine that could block git subprocess I/O system-wide.
 	var dirsToDelete []string
 
+	// --- Refcount path: shared-worktree teardown (#168 I3) ---
+	//
+	// Before the legacy worktree-removal blocks, check the sharer registry.
+	// If this agent is registered as a sharer, unregister it and decide
+	// whether to remove the shared worktree based on remaining sharers.
+	//
+	// NOTE: teardown does not hold the per-project advisory lock. The
+	// provisioning path (ensureWorktree / ProvisionShared) holds the lock
+	// during registration. A concurrent provision+delete race on the same
+	// branch is unlikely in practice (the hub serialises agent lifecycle)
+	// but not structurally excluded. Acceptable for single-node local mode
+	// which has no advisory locker.
+	refcountHandled := false
+	if repoRoot != "" {
+		// Do NOT silently swallow registry errors and fall through to the legacy
+		// path — that path could delete the shared worktree out from under live
+		// joiners. On a real registry I/O error, fail loudly instead.
+		branch, _, found, findErr := provision.FindBranchForAgent(repoRoot, agentName)
+		if findErr != nil {
+			return branchDeleted, fmt.Errorf("delete: FindBranchForAgent for %s: %w", agentName, findErr)
+		}
+		if found {
+			remaining, wtPath, unregErr := provision.UnregisterSharer(repoRoot, branch, agentName)
+			if unregErr != nil {
+				return branchDeleted, fmt.Errorf("delete: UnregisterSharer for branch %s agent %s: %w", branch, agentName, unregErr)
+			}
+			if len(remaining) == 0 {
+				util.Debugf("delete: last sharer for branch %s, removing worktree at %s", branch, wtPath)
+				worktreeStart := time.Now()
+				if deleted, err := util.RemoveWorktree(wtPath, removeBranch); err == nil {
+					if deleted {
+						branchDeleted = true
+					}
+					util.Debugf("delete: shared worktree removal completed in %v (branch deleted: %v)", time.Since(worktreeStart), deleted)
+				} else {
+					util.Debugf("delete: shared worktree removal failed in %v: %v", time.Since(worktreeStart), err)
+					_ = util.RemoveAllSafe(wtPath)
+					// Worktree removal failed, so the branch wasn't deleted by it —
+					// fall back to deleting the branch by name (like the legacy path).
+					if removeBranch && !branchDeleted {
+						if util.DeleteBranchIn(repoRoot, branch) {
+							branchDeleted = true
+							util.Debugf("delete: deleted branch %s via fallback after worktree removal failure", branch)
+						}
+					}
+				}
+			} else {
+				util.Debugf("delete: %d sharers remain for branch %s, detaching agent %s", len(remaining), branch, agentName)
+			}
+			refcountHandled = true
+		}
+	}
+
 	// Worktree-per-agent: remove the agent's worktree from the shared base.
 	// The worktree lives at <projectDir>/workspace/worktrees/<agentName>,
 	// separate from the agent config dir under agents/.
-	if worktreeDir != "" {
+	// Skip when the refcount path already handled removal/detach.
+	if worktreeDir != "" && !refcountHandled {
 		if _, err := os.Stat(filepath.Join(worktreeDir, ".git")); err == nil {
 			util.Debugf("delete: removing worktree-per-agent workspace at %s", worktreeDir)
 			worktreeStart := time.Now()
@@ -114,21 +172,22 @@ func DeleteAgentFiles(agentName string, projectPath string, removeBranch bool) (
 		}
 
 		agentWorkspace := filepath.Join(agentDir, "workspace")
-		// Check if it's a worktree before trying to remove it
-		if _, err := os.Stat(filepath.Join(agentWorkspace, ".git")); err == nil {
-			util.Debugf("delete: removing workspace at %s", agentWorkspace)
-			worktreeStart := time.Now()
-			if deleted, err := util.RemoveWorktree(agentWorkspace, removeBranch); err == nil {
-				if deleted {
-					branchDeleted = true
+		// Check if it's a worktree before trying to remove it.
+		// Skip when the refcount path already handled removal/detach —
+		// the shared worktree must not be removed while other sharers remain.
+		if !refcountHandled {
+			if _, err := os.Stat(filepath.Join(agentWorkspace, ".git")); err == nil {
+				util.Debugf("delete: removing workspace at %s", agentWorkspace)
+				worktreeStart := time.Now()
+				if deleted, err := util.RemoveWorktree(agentWorkspace, removeBranch); err == nil {
+					if deleted {
+						branchDeleted = true
+					}
+					util.Debugf("delete: worktree removal completed in %v (branch deleted: %v)", time.Since(worktreeStart), deleted)
+				} else {
+					util.Debugf("delete: worktree removal failed in %v: %v", time.Since(worktreeStart), err)
+					_ = util.RemoveAllSafe(agentWorkspace)
 				}
-				util.Debugf("delete: worktree removal completed in %v (branch deleted: %v)", time.Since(worktreeStart), deleted)
-			} else {
-				util.Debugf("delete: worktree removal failed in %v: %v", time.Since(worktreeStart), err)
-				// Ensure the workspace directory is gone even if worktree
-				// removal only partially succeeded, so that PruneWorktreesIn
-				// can detect the stale .git/worktrees entry.
-				_ = util.RemoveAllSafe(agentWorkspace)
 			}
 		}
 
@@ -146,7 +205,9 @@ func DeleteAgentFiles(agentName string, projectPath string, removeBranch bool) (
 
 		// If the branch wasn't already deleted via RemoveWorktree (e.g. because
 		// the workspace .git file didn't exist), try to delete it by name.
-		if removeBranch && !branchDeleted {
+		// Skip when refcount handled teardown — branch lifecycle is managed
+		// by the refcount path (last-sharer removes; others detach).
+		if removeBranch && !branchDeleted && !refcountHandled {
 			branchName := api.Slugify(agentName)
 			if util.DeleteBranchIn(repoRoot, branchName) {
 				branchDeleted = true
@@ -474,6 +535,15 @@ func ProvisionAgent(ctx context.Context, agentName string, templateName string, 
 				agentWorkspace = "" // Using external worktree
 				usedExistingWorktree = true
 				fmt.Printf("Warning: Relying on existing worktree for branch '%s' at '%s'\n", targetBranch, existingPath)
+				// Register as sharer for refcounted teardown (I3). Fail loudly:
+				// an untracked agent breaks the refcount (premature/leaked removal).
+				root, rootErr := util.RepoRootDir(projectDir)
+				if rootErr != nil {
+					return "", "", nil, fmt.Errorf("resolve repo root for sharer registration: %w", rootErr)
+				}
+				if regErr := provision.RegisterSharer(root, targetBranch, existingPath, agentName); regErr != nil {
+					return "", "", nil, fmt.Errorf("register sharer (attach): %w", regErr)
+				}
 			}
 		}
 
@@ -520,6 +590,15 @@ func ProvisionAgent(ctx context.Context, agentName string, templateName string, 
 			return "", "", nil, fmt.Errorf("failed to create git worktree: %w", err)
 		}
 		util.Debugf("provision: worktree created in %s", time.Since(worktreeStart))
+		// Register as sharer for refcounted teardown (I3). Fail loudly:
+		// an untracked agent breaks the refcount (premature/leaked removal).
+		root, rootErr := util.RepoRootDir(projectDir)
+		if rootErr != nil {
+			return "", "", nil, fmt.Errorf("resolve repo root for sharer registration: %w", rootErr)
+		}
+		if regErr := provision.RegisterSharer(root, worktreeBranch, agentWorkspace, agentName); regErr != nil {
+			return "", "", nil, fmt.Errorf("register sharer (create): %w", regErr)
+		}
 
 		// Write a .scion project marker into the worktree so in-container CLI
 		// can discover the project context. Worktrees don't contain .scion
