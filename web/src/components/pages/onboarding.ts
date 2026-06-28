@@ -739,7 +739,7 @@ export class ScionPageOnboarding extends LitElement {
           >
             <sl-option value="docker">Docker</sl-option>
             <sl-option value="podman">Podman</sl-option>
-            <sl-option value="container">Container (generic)</sl-option>
+            <sl-option value="container">Apple Container</sl-option>
           </sl-select>
         </div>
       `}
@@ -914,7 +914,7 @@ export class ScionPageOnboarding extends LitElement {
         <div class="alert alert-warning">
           <strong>No container runtime detected.</strong>
           <p>
-            Install Docker or Podman to pull or build images. You can skip this
+            Install Docker, Podman, or Apple Container to pull or build images. You can skip this
             step and configure a runtime later.
           </p>
         </div>
