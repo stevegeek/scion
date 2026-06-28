@@ -214,6 +214,9 @@ func (m *AgentManager) Start(ctx context.Context, opts api.StartOptions) (*api.A
 	// config.yaml (seeded from harness embeds) always has the user field.
 	// Also check template directories since harness-configs may be bundled
 	// inside templates (§3.4 of agnostic-template-design).
+	// resolvedHarnessConfigAuth captures the auth metadata from the resolved
+	// on-disk harness config for use by the auth pipeline later.
+	var resolvedHarnessConfigAuth *config.HarnessAuthMetadata
 	if harnessConfigName != "" {
 		var templatePaths []string
 		// Prefer opts.Template when it is an absolute path (e.g. hydrated
@@ -247,6 +250,9 @@ func (m *AgentManager) Start(ctx context.Context, opts api.StartOptions) (*api.A
 			}
 			if hcDir.Config.User != "" {
 				unixUsername = hcDir.Config.User
+			}
+			if hcDir.Config.Auth != nil {
+				resolvedHarnessConfigAuth = hcDir.Config.Auth
 			}
 		} else {
 			util.Debugf("image resolution: on-disk harness-config %q not found: %v", harnessConfigName, err)
@@ -389,6 +395,18 @@ func (m *AgentManager) Start(ctx context.Context, opts api.StartOptions) (*api.A
 		}
 	}
 
+	// Resolve auth metadata for the config-driven env var pipeline.
+	// Prefer the on-disk harness config (already resolved above for image/
+	// user); fall back to the settings entry.
+	var authMeta *config.HarnessAuthMetadata
+	if resolvedHarnessConfigAuth != nil {
+		authMeta = resolvedHarnessConfigAuth
+	} else if harnessConfigName != "" && settings != nil {
+		if hcEntry, err := settings.ResolveHarnessConfig(profileName, harnessConfigName); err == nil && hcEntry.Auth != nil {
+			authMeta = hcEntry.Auth
+		}
+	}
+
 	// 3. Resolve credentials via new auth pipeline
 
 	// Inject profile/harness-config env vars into opts.Env BEFORE building the
@@ -426,7 +444,7 @@ func (m *AgentManager) Start(ctx context.Context, opts api.StartOptions) (*api.A
 	var auth api.AuthConfig
 	var resolvedAuth *api.ResolvedAuth
 	if !opts.NoAuth {
-		auth = harness.GatherAuthWithEnv(authEnvOverlay, !opts.BrokerMode)
+		auth = harness.GatherAuthWithEnv(authEnvOverlay, !opts.BrokerMode, authMeta)
 		if opts.BrokerMode {
 			harness.OverlayFileSecrets(&auth, opts.ResolvedSecrets)
 		}
@@ -473,7 +491,8 @@ func (m *AgentManager) Start(ctx context.Context, opts api.StartOptions) (*api.A
 			util.Debugf("auth: applied harness-specific settings for %q", harnessName)
 		}
 		resolvedAuth = resolved
-		opts.ResolvedSecrets = filterResolvedSecretsForResolvedAuth(opts.ResolvedSecrets, &resolvedForSecretFilter)
+		configKeys := configAuthEnvKeySet(authMeta)
+		opts.ResolvedSecrets = filterResolvedSecretsForResolvedAuth(opts.ResolvedSecrets, &resolvedForSecretFilter, configKeys)
 		// The hub pre-merges environment-type secrets into ResolvedEnv before
 		// dispatching to the broker (see pkg/hub/httpdispatcher.go), so auth
 		// env keys copied into opts.Env via start_context's ResolvedEnv merge
@@ -486,7 +505,7 @@ func (m *AgentManager) Start(ctx context.Context, opts api.StartOptions) (*api.A
 				requiredAuthEnv[k] = struct{}{}
 			}
 			for k := range opts.Env {
-				if !isAuthEnvKey(k) {
+				if !isAuthEnvKey(k, configKeys) {
 					continue
 				}
 				if _, required := requiredAuthEnv[k]; !required {
@@ -1115,8 +1134,9 @@ func buildAuthEnvOverlay(baseEnv map[string]string, secrets []api.ResolvedSecret
 
 // filterResolvedSecretsForResolvedAuth drops auth-candidate secrets that are
 // not required by the selected resolved auth method while preserving all
-// non-auth secrets.
-func filterResolvedSecretsForResolvedAuth(secrets []api.ResolvedSecret, resolved *api.ResolvedAuth) []api.ResolvedSecret {
+// non-auth secrets. configAuthKeys extends the hardcoded auth key set with
+// keys from the harness config's auth metadata.
+func filterResolvedSecretsForResolvedAuth(secrets []api.ResolvedSecret, resolved *api.ResolvedAuth, configAuthKeys map[string]struct{}) []api.ResolvedSecret {
 	if len(secrets) == 0 || resolved == nil {
 		return secrets
 	}
@@ -1136,7 +1156,7 @@ func filterResolvedSecretsForResolvedAuth(secrets []api.ResolvedSecret, resolved
 
 	filtered := make([]api.ResolvedSecret, 0, len(secrets))
 	for _, s := range secrets {
-		if !isAuthCandidateSecret(s) {
+		if !isAuthCandidateSecret(s, configAuthKeys) {
 			filtered = append(filtered, s)
 			continue
 		}
@@ -1163,8 +1183,8 @@ func filterResolvedSecretsForResolvedAuth(secrets []api.ResolvedSecret, resolved
 	return filtered
 }
 
-func isAuthCandidateSecret(s api.ResolvedSecret) bool {
-	if (s.Type == "environment" || s.Type == "") && isAuthEnvKey(secretEnvTarget(s)) {
+func isAuthCandidateSecret(s api.ResolvedSecret, configAuthKeys map[string]struct{}) bool {
+	if (s.Type == "environment" || s.Type == "") && isAuthEnvKey(secretEnvTarget(s), configAuthKeys) {
 		return true
 	}
 	if s.Type == "file" && authFileKind(s.Name, s.Target) != "" {
@@ -1180,7 +1200,7 @@ func secretEnvTarget(s api.ResolvedSecret) string {
 	return s.Name
 }
 
-func isAuthEnvKey(key string) bool {
+func isAuthEnvKey(key string, extraAuthKeys ...map[string]struct{}) bool {
 	switch key {
 	case "GEMINI_API_KEY",
 		"GOOGLE_API_KEY",
@@ -1196,8 +1216,34 @@ func isAuthEnvKey(key string) bool {
 		"GOOGLE_CLOUD_LOCATION":
 		return true
 	default:
+		for _, extra := range extraAuthKeys {
+			if _, ok := extra[key]; ok {
+				return true
+			}
+		}
 		return false
 	}
+}
+
+// configAuthEnvKeySet builds a set of env var keys declared across all auth
+// types in a harness config's auth metadata. Returns nil when no keys are
+// declared. Used to extend isAuthEnvKey with config-driven keys.
+func configAuthEnvKeySet(authMeta *config.HarnessAuthMetadata) map[string]struct{} {
+	if authMeta == nil || len(authMeta.Types) == 0 {
+		return nil
+	}
+	keys := make(map[string]struct{})
+	for _, authType := range authMeta.Types {
+		for _, req := range authType.RequiredEnv {
+			for _, k := range req.AnyOf {
+				keys[k] = struct{}{}
+			}
+		}
+	}
+	if len(keys) == 0 {
+		return nil
+	}
+	return keys
 }
 
 func authFileKind(name, target string) string {
