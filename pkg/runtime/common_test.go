@@ -1227,6 +1227,17 @@ func TestResolveHostNetworking(t *testing.T) {
 			wantEP:    "http://localhost:8080",
 		},
 		{
+			name:        "force-host with podman bridge hostname rewrites to localhost",
+			runtimeName: "podman",
+			env: map[string]string{
+				"SCION_HUB_ENDPOINT": "http://host.containers.internal:8080",
+				"SCION_HUB_URL":      "http://host.containers.internal:8080",
+			},
+			forceHost: true,
+			wantMode:  "host",
+			wantEP:    "http://localhost:8080",
+		},
+		{
 			name:        "force-host with no endpoint yields no override",
 			runtimeName: "docker",
 			env:         map[string]string{},
