@@ -24,7 +24,7 @@ import (
 // container's RunConfig.NetworkMode and ExtraHosts (run.go:672, 891-892) for a
 // colocated Docker agent. The broker supplies the public-domain host-gateway
 // mapping via opts.ExtraHosts (from colocatedExtraHosts); the agent path
-// derives NetworkMode from ResolveDockerNetworking and merges BridgeExtraHosts.
+// derives NetworkMode from ResolveHostNetworking and merges BridgeExtraHosts.
 func TestColocatedDockerNetworkComposition(t *testing.T) {
 	const domainHostGateway = "hub.example.com:host-gateway"
 
@@ -52,7 +52,7 @@ func TestColocatedDockerNetworkComposition(t *testing.T) {
 			wantExtraHosts: []string{domainHostGateway},
 		},
 		{
-			// Legacy fallback: ResolveDockerNetworking rewrites the bridge
+			// Legacy fallback: ResolveHostNetworking rewrites the bridge
 			// hostname back to localhost (reachable under host networking), so
 			// by the time agentEnv is built no host-gateway add-host is needed.
 			name:           "host.docker.internal fallback uses host networking",
@@ -69,7 +69,7 @@ func TestColocatedDockerNetworkComposition(t *testing.T) {
 				t.Setenv(runtime.ForceHostNetworkEnvVar, "1")
 			}
 			env := map[string]string{"SCION_HUB_ENDPOINT": tt.hubEndpoint}
-			gotMode := runtime.ResolveDockerNetworking("docker", env)
+			gotMode := runtime.ResolveHostNetworking("docker", env)
 			if gotMode != tt.wantNetMode {
 				t.Errorf("NetworkMode = %q, want %q", gotMode, tt.wantNetMode)
 			}

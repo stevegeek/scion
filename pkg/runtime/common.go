@@ -610,22 +610,20 @@ func forceHostNetworking() bool {
 	return os.Getenv(ForceHostNetworkEnvVar) != ""
 }
 
-// ResolveDockerNetworking checks whether Docker host networking should be used
-// to allow containers to reach services on the host's loopback interface.
-// When the hub endpoint is localhost or was translated to a Docker bridge
-// hostname (host.docker.internal), it returns "host" and rewrites any bridge
-// hostnames back to localhost in the env map. This avoids the need for the
-// server to bind to 0.0.0.0.
+// ResolveHostNetworking reports whether a container should use host networking
+// to reach services on the host's loopback interface, returning "host" (the
+// network mode) or "" (no override). When the hub endpoint is localhost or was
+// translated to a bridge hostname (host.docker.internal), it returns "host" and
+// rewrites any bridge hostnames back to localhost in the env map. This avoids
+// the need for the server to bind to 0.0.0.0.
 //
 // When the SCION_FORCE_HOST_NETWORK escape hatch is set, host networking is
-// forced regardless of the endpoint, reverting to the legacy behavior.
+// forced for any runtime whenever a hub endpoint is configured, reverting to
+// the legacy behavior.
 //
-// For non-Docker runtimes or non-localhost endpoints, returns "" (no override).
-func ResolveDockerNetworking(runtimeName string, env map[string]string) string {
-	if runtimeName != "docker" {
-		return ""
-	}
-
+// For non-Docker runtimes (absent the escape hatch) or non-localhost endpoints,
+// returns "" (no override).
+func ResolveHostNetworking(runtimeName string, env map[string]string) string {
 	ep := env["SCION_HUB_ENDPOINT"]
 	if ep == "" {
 		ep = env["SCION_HUB_URL"]
@@ -634,11 +632,17 @@ func ResolveDockerNetworking(runtimeName string, env map[string]string) string {
 		return ""
 	}
 
-	// Escape hatch: force host networking regardless of endpoint so a
-	// deployment can revert to the legacy behavior without a redeploy.
+	// Escape hatch: force host networking regardless of the endpoint value, for
+	// any runtime, so a deployment can revert to the legacy behavior without a
+	// redeploy. Runtime-agnostic, so evaluated before the Docker-only endpoint
+	// heuristics below.
 	if forceHostNetworking() {
 		rewriteBridgeHostToLocalhost(env)
 		return "host"
+	}
+
+	if runtimeName != "docker" {
+		return ""
 	}
 
 	// If endpoint uses the Docker bridge hostname (translated from localhost),
@@ -667,7 +671,10 @@ func ResolveDockerNetworking(runtimeName string, env map[string]string) string {
 func rewriteBridgeHostToLocalhost(env map[string]string) {
 	for _, key := range []string{"SCION_HUB_ENDPOINT", "SCION_HUB_URL"} {
 		if v, ok := env[key]; ok {
-			env[key] = strings.Replace(v, "host.docker.internal", "localhost", 1)
+			v = strings.Replace(v, "host.docker.internal", "localhost", 1)
+			// host.containers.internal does not resolve under --network=host.
+			v = strings.Replace(v, "host.containers.internal", "localhost", 1)
+			env[key] = v
 		}
 	}
 }

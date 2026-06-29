@@ -1117,7 +1117,7 @@ func TestBridgeExtraHosts(t *testing.T) {
 	}
 }
 
-func TestResolveDockerNetworking(t *testing.T) {
+func TestResolveHostNetworking(t *testing.T) {
 	tests := []struct {
 		name        string
 		runtimeName string
@@ -1217,18 +1217,25 @@ func TestResolveDockerNetworking(t *testing.T) {
 			wantEP:    "http://localhost:8080",
 		},
 		{
-			name:        "force-host ignored for non-docker",
+			name:        "force-host applies to non-docker",
 			runtimeName: "podman",
 			env: map[string]string{
 				"SCION_HUB_ENDPOINT": "http://localhost:8080",
 			},
 			forceHost: true,
-			wantMode:  "",
+			wantMode:  "host",
 			wantEP:    "http://localhost:8080",
 		},
 		{
 			name:        "force-host with no endpoint yields no override",
 			runtimeName: "docker",
+			env:         map[string]string{},
+			forceHost:   true,
+			wantMode:    "",
+		},
+		{
+			name:        "force-host with no endpoint yields no override (non-docker)",
+			runtimeName: "podman",
 			env:         map[string]string{},
 			forceHost:   true,
 			wantMode:    "",
@@ -1246,9 +1253,9 @@ func TestResolveDockerNetworking(t *testing.T) {
 				env[k] = v
 			}
 
-			got := ResolveDockerNetworking(tt.runtimeName, env)
+			got := ResolveHostNetworking(tt.runtimeName, env)
 			if got != tt.wantMode {
-				t.Errorf("ResolveDockerNetworking(%q) = %q, want %q", tt.runtimeName, got, tt.wantMode)
+				t.Errorf("ResolveHostNetworking(%q) = %q, want %q", tt.runtimeName, got, tt.wantMode)
 			}
 			if tt.wantEP != "" {
 				if ep := env["SCION_HUB_ENDPOINT"]; ep != tt.wantEP {
