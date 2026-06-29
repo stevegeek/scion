@@ -459,6 +459,11 @@ func runServerStart(cmd *cobra.Command, args []string) error {
 								hubCreds["database_driver"] = cfg.Database.Driver
 								hubCreds["database_url"] = cfg.Database.URL
 							}
+							// Inject chat integration secrets from the secret backend.
+							// Pass the plugin's merged config so secrets are only injected
+							// when not already set by file or inline config.
+							brokerCfg := pluginMgr.GetPluginConfig(scionplugin.PluginTypeBroker, bt)
+							injectPluginSecrets(ctx, secretBackend, bt, brokerCfg, hubCreds)
 							if cfgErr := pluginMgr.ConfigureBroker(bt, hubCreds); cfgErr != nil {
 								log.Printf("Warning: failed to inject hub credentials into broker plugin %q: %v", bt, cfgErr)
 							} else {
@@ -1827,9 +1832,16 @@ func initPluginManager() *scionplugin.Manager {
 		Broker: make(map[string]scionplugin.PluginEntry),
 	}
 	for name, entry := range vs.Server.Plugins.Broker {
+		// Merge config_file contents with inline config (inline overrides file).
+		mergedConfig, mergeErr := config.LoadPluginConfigFile(entry.ConfigFile, entry.Config)
+		if mergeErr != nil {
+			log.Printf("Warning: failed to load config file for plugin %q: %v", name, mergeErr)
+			mergedConfig = entry.Config
+		}
 		pluginsCfg.Broker[name] = scionplugin.PluginEntry{
 			Path:        entry.Path,
-			Config:      entry.Config,
+			Config:      mergedConfig,
+			ConfigFile:  entry.ConfigFile,
 			SelfManaged: entry.SelfManaged,
 			Address:     entry.Address,
 		}
@@ -1989,4 +2001,52 @@ func resolveMaintenanceConfig(cfg *config.GlobalConfig) hub.MaintenanceConfig {
 	}
 
 	return mc
+}
+
+// pluginSecretKeyMap maps plugin names to their well-known secret keys and
+// the corresponding plugin config keys. Each entry maps a secret backend key
+// to the config key that the plugin's Configure() expects.
+var pluginSecretKeyMap = map[string][]struct {
+	secretKey string
+	configKey string
+}{
+	"telegram": {
+		{config.SecretTelegramBotToken, "bot_token"},
+		{config.SecretTelegramWebhookKey, "webhook_secret"},
+	},
+	"discord": {
+		{config.SecretDiscordBotToken, "bot_token"},
+		{config.SecretDiscordPublicKey, "public_key"},
+	},
+	"chat-app": {
+		{config.SecretGChatSigningKey, "signing_key"},
+	},
+}
+
+// injectPluginSecrets loads chat integration secrets from the secret backend
+// and injects them into the extra credentials map. Respects the fallback chain:
+// if the plugin's merged config (file + inline) already has a value for a key,
+// the secret backend is not consulted for that key.
+func injectPluginSecrets(ctx context.Context, sb secret.SecretBackend, pluginName string, pluginConfig, creds map[string]string) {
+	if sb == nil {
+		return
+	}
+
+	mappings, ok := pluginSecretKeyMap[pluginName]
+	if !ok {
+		return
+	}
+
+	hubID := sb.HubID()
+	for _, m := range mappings {
+		if existing, ok := pluginConfig[m.configKey]; ok && existing != "" {
+			continue
+		}
+		sv, err := sb.Get(ctx, m.secretKey, store.ScopeHub, hubID)
+		if err != nil || sv == nil || sv.Value == "" {
+			continue
+		}
+		creds[m.configKey] = sv.Value
+		slog.Info("Injected secret into broker plugin", "secret", m.secretKey, "plugin", pluginName, "config_key", m.configKey)
+	}
 }
