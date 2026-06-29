@@ -688,13 +688,13 @@ func (m *AgentManager) Start(ctx context.Context, opts api.StartOptions) (*api.A
 		delete(opts.Env, "SCION_AUTH_TOKEN")
 	}
 
-	// Resolve Docker host networking: when the hub endpoint is localhost or was
+	// Resolve host networking: when the hub endpoint is localhost or was
 	// translated to host.docker.internal, use --network=host so the container
 	// can reach the host's loopback interface directly. This also rewrites any
 	// bridge hostnames back to localhost in opts.Env.
-	dockerNetworkMode := runtime.ResolveDockerNetworking(m.Runtime.Name(), opts.Env)
-	if dockerNetworkMode != "" {
-		opts.Env["SCION_NETWORK_MODE"] = dockerNetworkMode
+	networkMode := runtime.ResolveHostNetworking(m.Runtime.Name(), opts.Env)
+	if networkMode != "" {
+		opts.Env["SCION_NETWORK_MODE"] = networkMode
 	}
 
 	// Persist harness auth override to scion-agent.json so sciontool inside the container sees it.
@@ -919,7 +919,7 @@ func (m *AgentManager) Start(ctx context.Context, opts api.StartOptions) (*api.A
 		Resume:               opts.Resume,
 		MetadataInterception: hasMetadataInterception(agentEnv),
 		ExtraHosts:           mergeExtraHosts(opts.ExtraHosts, runtime.BridgeExtraHosts(m.Runtime.Name(), agentEnv)),
-		NetworkMode:          dockerNetworkMode,
+		NetworkMode:          networkMode,
 		Labels: func() map[string]string {
 			l := map[string]string{
 				"scion.agent":          "true",
