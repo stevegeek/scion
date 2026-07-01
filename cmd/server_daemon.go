@@ -17,6 +17,7 @@ package cmd
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -25,6 +26,7 @@ import (
 
 	"github.com/GoogleCloudPlatform/scion/pkg/config"
 	"github.com/GoogleCloudPlatform/scion/pkg/daemon"
+	"github.com/GoogleCloudPlatform/scion/pkg/hubsync"
 	"github.com/GoogleCloudPlatform/scion/pkg/util"
 	"github.com/spf13/cobra"
 )
@@ -184,12 +186,53 @@ func runServerStop(cmd *cobra.Command, args []string) error {
 
 	running, pid, _ := daemon.StatusComponent(serverDaemonComponent, globalDir)
 
+	serverPorts := collectServerPorts(cmd)
+
 	if stopForce {
-		return runServerStopForce(globalDir, running, pid)
+		return runServerStopForce(globalDir, running, pid, serverPorts)
 	}
 
 	if !running {
-		return fmt.Errorf("server daemon is not running")
+		// PID file is missing or stale — probe ports to see if a server is
+		// still listening. This handles the case where the PID file was
+		// deleted while the server was still running.
+		ports := serverPorts
+		occupied := daemon.DetectOccupiedPorts(ports)
+		if len(occupied) == 0 {
+			return fmt.Errorf("server daemon is not running")
+		}
+
+		fmt.Println("No PID file found, but server port(s) appear to be in use:")
+		for _, port := range occupied {
+			fmt.Printf("  port %d\n", port)
+		}
+		fmt.Println()
+
+		if !hubsync.ConfirmAction("Kill the process(es) on these ports?", false, autoConfirm) {
+			fmt.Println("Aborted.")
+			return nil
+		}
+
+		killed := 0
+		for _, port := range occupied {
+			killedPID, err := daemon.ForceKillPort(port)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "Warning: failed to kill process on port %d: %v\n", port, err)
+				continue
+			}
+			if killedPID > 0 {
+				fmt.Printf("Killed process %d on port %d\n", killedPID, port)
+				killed++
+			}
+		}
+
+		_ = daemon.RemovePIDComponent(serverDaemonComponent, globalDir)
+
+		if killed == 0 {
+			return fmt.Errorf("failed to kill any processes on occupied ports")
+		}
+		fmt.Println("Server stopped.")
+		return nil
 	}
 
 	fmt.Printf("Stopping server daemon (PID: %d)...\n", pid)
@@ -209,7 +252,7 @@ func runServerStop(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
-func runServerStopForce(globalDir string, pidRunning bool, pid int) error {
+func runServerStopForce(globalDir string, pidRunning bool, pid int, serverPorts []int) error {
 	killed := false
 
 	// If PID file exists and process is running, stop it normally first.
@@ -221,8 +264,8 @@ func runServerStopForce(globalDir string, pidRunning bool, pid int) error {
 		}
 	}
 
-	// Probe default server ports and kill any process holding them.
-	ports := []int{8080, 9800, 9810}
+	// Probe server ports and kill any process holding them.
+	ports := serverPorts
 	occupied := daemon.DetectOccupiedPorts(ports)
 	if len(occupied) == 0 && !killed {
 		fmt.Println("No running server found.")
@@ -355,33 +398,55 @@ func runServerStatus(cmd *cobra.Command, args []string) error {
 		status.PIDFile = daemon.GetPIDPathComponent(serverDaemonComponent, globalDir)
 	}
 
-	// Probe health endpoints to check component status
+	// Probe health endpoints to check component status.
+	// Parse JSON responses to verify composite health rather than relying
+	// solely on HTTP 200 (the web server returns 200 even when degraded).
 	client := &http.Client{Timeout: 2 * time.Second}
 
 	// Check web/hub on default web port (8080)
 	if resp, err := client.Get("http://127.0.0.1:8080/healthz"); err == nil {
-		resp.Body.Close()
-		if resp.StatusCode == http.StatusOK {
-			status.WebRunning = true
-			status.HubRunning = true // Hub is mounted on web when both are enabled
+		body, readErr := io.ReadAll(resp.Body)
+		_ = resp.Body.Close()
+		if resp.StatusCode == http.StatusOK && readErr == nil {
+			var health struct {
+				Status string           `json:"status"`
+				Web    *json.RawMessage `json:"web,omitempty"`
+				Hub    *json.RawMessage `json:"hub,omitempty"`
+			}
+			if json.Unmarshal(body, &health) == nil {
+				status.WebRunning = true
+				status.HubRunning = health.Hub != nil
+			}
 		}
 	}
 
 	// Check standalone hub on default hub port (9810) if not found on web port
 	if !status.HubRunning {
 		if resp, err := client.Get("http://127.0.0.1:9810/healthz"); err == nil {
-			resp.Body.Close()
-			if resp.StatusCode == http.StatusOK {
-				status.HubRunning = true
+			body, readErr := io.ReadAll(resp.Body)
+			_ = resp.Body.Close()
+			if resp.StatusCode == http.StatusOK && readErr == nil {
+				var health struct {
+					Status string `json:"status"`
+				}
+				if json.Unmarshal(body, &health) == nil {
+					status.HubRunning = true
+				}
 			}
 		}
 	}
 
 	// Check broker on default broker port (9800)
 	if resp, err := client.Get("http://127.0.0.1:9800/healthz"); err == nil {
-		resp.Body.Close()
-		if resp.StatusCode == http.StatusOK {
-			status.BrokerRunning = true
+		body, readErr := io.ReadAll(resp.Body)
+		_ = resp.Body.Close()
+		if resp.StatusCode == http.StatusOK && readErr == nil {
+			var health struct {
+				Status string `json:"status"`
+			}
+			if json.Unmarshal(body, &health) == nil {
+				status.BrokerRunning = true
+			}
 		}
 	}
 
@@ -421,6 +486,35 @@ func runServerStatus(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
+// waitForServerReady polls the server's /healthz endpoint until it returns 200
+// with a "healthy" composite status, or the timeout expires.
+// The web server's /healthz always returns HTTP 200 but reports a composite
+// status that reflects hub and broker readiness. On first start the hub
+// database may still be migrating when the HTTP listener begins accepting
+// connections, so we parse the JSON body to confirm all components are ready.
+func waitForServerReady(host string, port int, timeout time.Duration) bool {
+	client := &http.Client{Timeout: 2 * time.Second}
+	url := fmt.Sprintf("http://%s:%d/healthz", host, port)
+	deadline := time.Now().Add(timeout)
+
+	for time.Now().Before(deadline) {
+		if resp, err := client.Get(url); err == nil {
+			body, readErr := io.ReadAll(resp.Body)
+			_ = resp.Body.Close()
+			if resp.StatusCode == http.StatusOK && readErr == nil {
+				var health struct {
+					Status string `json:"status"`
+				}
+				if json.Unmarshal(body, &health) == nil && health.Status == "healthy" {
+					return true
+				}
+			}
+		}
+		time.Sleep(250 * time.Millisecond)
+	}
+	return false
+}
+
 // printWorkstationQuickstart prints the first-run quickstart information
 // including the developer token and web UI URL after a workstation-mode daemon starts.
 // When the machine hasn't been onboarded yet, it prints and opens the /onboarding URL.
@@ -441,9 +535,13 @@ func printWorkstationQuickstart(needsOnboarding bool, globalDir string, host str
 		url := fmt.Sprintf("http://%s:%d%s", displayHost, wPort, path)
 		fmt.Printf("Web UI:  %s\n", url)
 
-		// Auto-open the browser in interactive terminals
+		// Auto-open the browser in interactive terminals once the server is ready.
 		if os.Getenv("SCION_NO_BROWSER") == "" && util.IsTerminal() && !util.IsHeadlessEnvironment() {
-			_ = util.OpenBrowser(url)
+			if waitForServerReady(displayHost, wPort, 20*time.Second) {
+				_ = util.OpenBrowser(url)
+			} else {
+				fmt.Println("  (server not yet ready — open the URL manually once it starts)")
+			}
 		}
 	}
 
