@@ -19,9 +19,13 @@ import (
 	"encoding/json"
 	"log/slog"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strings"
+	"sync"
 
 	"github.com/GoogleCloudPlatform/scion/pkg/config"
+	"github.com/GoogleCloudPlatform/scion/pkg/plugin"
 )
 
 // IntegrationManager is the narrow interface satisfied by *plugin.Manager.
@@ -36,6 +40,8 @@ type IntegrationManager interface {
 	Reconnect(pluginType, name string) error
 	BrokerHealthCheck(name string) (status, message string, details map[string]string, err error)
 	BrokerInfo(name string) (version, channelID string, capabilities []string, err error)
+	UpdatePlugin(name string, repoPath string) error
+	InstallPlugin(name, repoPath, pluginsDir string) error
 }
 
 // --- Response types ---
@@ -75,6 +81,29 @@ type IntegrationConfigUpdateRequest struct {
 	Settings map[string]string `json:"settings"`
 	Secrets  map[string]string `json:"secrets"`
 }
+
+// AvailableIntegration represents a plugin that could be installed.
+type AvailableIntegration struct {
+	Name     string `json:"name"`
+	Platform string `json:"platform"`
+}
+
+// knownPlugins is the list of plugins that can be discovered for installation.
+var knownPlugins = []string{"telegram", "discord"}
+
+var knownPluginSet = func() map[string]bool {
+	s := make(map[string]bool, len(knownPlugins))
+	for _, n := range knownPlugins {
+		s[n] = true
+	}
+	return s
+}()
+
+// settingsWriteMu guards concurrent writes to settings.yaml.
+var settingsWriteMu sync.Mutex
+
+// pluginBuildMu guards concurrent build operations per plugin name.
+var pluginBuildMu sync.Map
 
 // --- Route dispatchers ---
 
@@ -118,6 +147,12 @@ func (s *Server) handleAdminIntegrationByName(w http.ResponseWriter, r *http.Req
 		action = parts[1]
 	}
 
+	// Special-case: "available" as a name with no action is the available-integrations list.
+	if name == "available" && action == "" && r.Method == http.MethodGet {
+		s.handleListAvailableIntegrations(w, r)
+		return
+	}
+
 	switch action {
 	case "":
 		if r.Method != http.MethodGet {
@@ -143,6 +178,18 @@ func (s *Server) handleAdminIntegrationByName(w http.ResponseWriter, r *http.Req
 			return
 		}
 		s.handleIntegrationHealth(w, r, name)
+	case "update":
+		if r.Method != http.MethodPost {
+			MethodNotAllowed(w)
+			return
+		}
+		s.handleUpdateIntegration(w, r, name)
+	case "install":
+		if r.Method != http.MethodPost {
+			MethodNotAllowed(w)
+			return
+		}
+		s.handleInstallIntegration(w, r, name)
 	default:
 		NotFound(w, "integration endpoint")
 	}
@@ -344,6 +391,161 @@ func (s *Server) handleIntegrationHealth(w http.ResponseWriter, r *http.Request,
 	writeJSON(w, http.StatusOK, status)
 }
 
+func (s *Server) handleUpdateIntegration(w http.ResponseWriter, r *http.Request, name string) {
+	s.mu.RLock()
+	mgr := s.pluginManager
+	s.mu.RUnlock()
+
+	if mgr == nil || !mgr.HasPlugin("broker", name) {
+		NotFound(w, "integration")
+		return
+	}
+
+	if mgr.IsSelfManaged("broker", name) {
+		BadRequest(w, "cannot update a self-managed integration")
+		return
+	}
+
+	repoPath := s.config.MaintenanceConfig.RepoPath
+	if repoPath == "" {
+		slog.Error("No repository path configured for plugin update")
+		InternalError(w)
+		return
+	}
+
+	mu := acquirePluginBuildLock(name)
+	if mu == nil {
+		writeJSON(w, http.StatusConflict, map[string]string{
+			"error": "a build is already in progress for this integration",
+		})
+		return
+	}
+	defer releasePluginBuildLock(name)
+
+	if err := mgr.UpdatePlugin(name, repoPath); err != nil {
+		slog.Error("Failed to update integration", "plugin", name, "error", err)
+		InternalError(w)
+		return
+	}
+
+	if err := s.reconfigureIntegration(r.Context(), mgr, name); err != nil {
+		slog.Warn("Plugin rebuilt but reconfigure failed", "plugin", name, "error", err)
+	}
+
+	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+}
+
+func (s *Server) handleInstallIntegration(w http.ResponseWriter, r *http.Request, name string) {
+	if !knownPluginSet[name] {
+		BadRequest(w, "unknown integration: "+name)
+		return
+	}
+
+	s.mu.RLock()
+	mgr := s.pluginManager
+	s.mu.RUnlock()
+
+	if mgr == nil {
+		slog.Error("Plugin manager not initialized")
+		InternalError(w)
+		return
+	}
+
+	if mgr.HasPlugin("broker", name) {
+		BadRequest(w, "integration is already installed")
+		return
+	}
+
+	repoPath := s.config.MaintenanceConfig.RepoPath
+	if repoPath == "" {
+		slog.Error("No repository path configured for plugin install")
+		InternalError(w)
+		return
+	}
+
+	sourceDir := filepath.Join(repoPath, "extras", "scion-"+name)
+	if _, err := os.Stat(sourceDir); err != nil {
+		NotFound(w, "plugin source")
+		return
+	}
+
+	mu := acquirePluginBuildLock(name)
+	if mu == nil {
+		writeJSON(w, http.StatusConflict, map[string]string{
+			"error": "a build is already in progress for this integration",
+		})
+		return
+	}
+	defer releasePluginBuildLock(name)
+
+	pluginsDir, err := plugin.DefaultPluginsDir()
+	if err != nil {
+		slog.Error("Failed to resolve plugins directory", "error", err)
+		InternalError(w)
+		return
+	}
+
+	if err := mgr.InstallPlugin(name, repoPath, pluginsDir); err != nil {
+		slog.Error("Failed to install integration", "plugin", name, "error", err)
+		InternalError(w)
+		return
+	}
+
+	configFilePath := "~/.scion/scion-" + name + ".yaml"
+	if err := config.CreatePluginConfigFile(name, configFilePath); err != nil {
+		slog.Error("Failed to create plugin config file", "plugin", name, "error", err)
+		InternalError(w)
+		return
+	}
+
+	settingsWriteMu.Lock()
+	err = config.AddPluginToSettings(name, configFilePath)
+	settingsWriteMu.Unlock()
+	if err != nil {
+		slog.Error("Failed to add plugin to settings.yaml", "plugin", name, "error", err)
+		InternalError(w)
+		return
+	}
+
+	if err := s.reconfigureIntegration(r.Context(), mgr, name); err != nil {
+		slog.Warn("Plugin installed but reconfigure failed", "plugin", name, "error", err)
+	}
+
+	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+}
+
+func (s *Server) handleListAvailableIntegrations(w http.ResponseWriter, _ *http.Request) {
+	s.mu.RLock()
+	mgr := s.pluginManager
+	s.mu.RUnlock()
+
+	repoPath := s.config.MaintenanceConfig.RepoPath
+
+	var available []AvailableIntegration
+	for _, name := range knownPlugins {
+		if mgr != nil && mgr.HasPlugin("broker", name) {
+			continue
+		}
+		if repoPath != "" {
+			sourceDir := filepath.Join(repoPath, "extras", "scion-"+name)
+			if _, err := os.Stat(sourceDir); err != nil {
+				continue
+			}
+		} else {
+			continue
+		}
+		available = append(available, AvailableIntegration{
+			Name:     name,
+			Platform: resolvePlatform(name),
+		})
+	}
+
+	if available == nil {
+		available = []AvailableIntegration{}
+	}
+	writeJSON(w, http.StatusOK, available)
+}
+
 // --- Helpers ---
 
 // pluginNameFromKey extracts the plugin name from a "type:name" key,
@@ -445,6 +647,28 @@ func getIntegrationStatus(mgr IntegrationManager, name string) *IntegrationStatu
 	}
 
 	return status
+}
+
+// acquirePluginBuildLock tries to acquire a per-plugin build lock. Returns a
+// non-nil *sync.Mutex if acquired, nil if another build is already in progress.
+func acquirePluginBuildLock(name string) *sync.Mutex {
+	mu := &sync.Mutex{}
+	mu.Lock()
+	actual, loaded := pluginBuildMu.LoadOrStore(name, mu)
+	if loaded {
+		existing := actual.(*sync.Mutex)
+		if !existing.TryLock() {
+			return nil
+		}
+		return existing
+	}
+	return mu
+}
+
+func releasePluginBuildLock(name string) {
+	if actual, ok := pluginBuildMu.Load(name); ok {
+		actual.(*sync.Mutex).Unlock()
+	}
 }
 
 // reconfigureIntegration reloads config for a plugin and calls ConfigureBroker.
