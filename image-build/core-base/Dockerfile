@@ -170,5 +170,8 @@ ENV VISUAL=nano
 # Install Chrome DevTools MCP server globally
 RUN npm install -g chrome-devtools-mcp
 
+# Install playwright CLI
+RUN npm install -g @playwright/cli@latest
+
 # Default to bash - no scion-specific entrypoint
 CMD ["bash"]
