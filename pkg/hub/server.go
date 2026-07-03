@@ -39,6 +39,7 @@ import (
 	"github.com/GoogleCloudPlatform/scion/pkg/eventbus"
 	"github.com/GoogleCloudPlatform/scion/pkg/harness"
 	"github.com/GoogleCloudPlatform/scion/pkg/hub/githubapp"
+	"github.com/GoogleCloudPlatform/scion/pkg/hub/imagecheck"
 	"github.com/GoogleCloudPlatform/scion/pkg/messages"
 	"github.com/GoogleCloudPlatform/scion/pkg/observability/dbmetrics"
 	"github.com/GoogleCloudPlatform/scion/pkg/observability/dispatchmetrics"
@@ -48,6 +49,7 @@ import (
 	"github.com/GoogleCloudPlatform/scion/pkg/util/logging"
 	"github.com/google/uuid"
 	"github.com/robfig/cron/v3"
+	"golang.org/x/sync/singleflight"
 )
 
 const (
@@ -668,6 +670,9 @@ type Server struct {
 
 	imageBuildActive atomic.Bool
 	imagePullActive  atomic.Bool
+
+	imageChecker      *imagecheck.Checker
+	imageStatusFlight singleflight.Group
 }
 
 func newInstanceID() string {
@@ -970,6 +975,9 @@ func New(cfg ServerConfig, s store.Store) (*Server, error) {
 
 	// Initialize GCP token rate limiter (1 req/sec average, burst of 10)
 	srv.gcpTokenRateLimiter = NewGCPTokenRateLimiter(1, 10)
+
+	// Initialize image checker for harness config image status verification
+	srv.imageChecker = imagecheck.NewChecker()
 
 	srv.registerRoutes()
 
@@ -1574,6 +1582,12 @@ func (s *Server) SetGCPTokenMetrics(m GCPTokenMetricsRecorder) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.gcpTokenMetrics = m
+}
+
+// SetLocalImageChecker wires a local container runtime into the image
+// checker so it can verify images via the local Docker/Podman daemon.
+func (s *Server) SetLocalImageChecker(l imagecheck.LocalImageExister) {
+	s.imageChecker.SetLocal(l)
 }
 
 // GetMaintenanceState returns the runtime maintenance state.

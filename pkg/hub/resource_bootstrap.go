@@ -19,10 +19,14 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"log/slog"
 	"path/filepath"
+
+	"golang.org/x/sync/errgroup"
 
 	"github.com/GoogleCloudPlatform/scion/pkg/config"
 	"github.com/GoogleCloudPlatform/scion/pkg/storage"
+	"github.com/GoogleCloudPlatform/scion/pkg/store"
 	"github.com/GoogleCloudPlatform/scion/resources"
 )
 
@@ -38,8 +42,23 @@ func (s *Server) BootstrapBundledResources(ctx context.Context, opts BootstrapOp
 		return nil
 	}
 
+	skipHarnessConfigs := false
+	if opts.SkipIfAnyExist {
+		existing, err := s.store.ListHarnessConfigs(ctx, store.HarnessConfigFilter{
+			Status: store.HarnessConfigStatusActive,
+		}, store.ListOptions{Limit: 1})
+		if err == nil && len(existing.Items) > 0 {
+			s.resourceLog.Info("bundled resource bootstrap: active harness configs exist, skipping harness-config seeding")
+			skipHarnessConfigs = true
+		}
+	}
+
 	var errs []error
 	for _, r := range resources.BuiltinResources() {
+		if skipHarnessConfigs && r.Kind == storage.ResourceKindHarnessConfig {
+			continue
+		}
+
 		src := NewFSResourceSource(r)
 
 		var rs *ResourceStore
@@ -95,4 +114,57 @@ func resolveHarnessType(r resources.BundledResource) (string, error) {
 		return "", fmt.Errorf("config.yaml missing harness field")
 	}
 	return entry.Harness, nil
+}
+
+// checkAndUpdateImageStatus resolves the image registry, checks image
+// availability, and persists the result.
+func (s *Server) checkAndUpdateImageStatus(ctx context.Context, hcID, image string) {
+	registry := s.resolveImageRegistry()
+	resolvedImage := config.RewriteImageRegistry(image, registry)
+
+	result := s.imageChecker.Check(ctx, resolvedImage)
+
+	if err := s.store.UpdateHarnessConfigImageStatus(ctx, hcID, result.Status, result.CheckedAt); err != nil {
+		slog.Error("failed to update image status", "id", hcID, "error", err)
+	}
+}
+
+// resolveImageRegistry returns the configured image registry, falling back
+// to an empty string (no rewrite) if unavailable.
+func (s *Server) resolveImageRegistry() string {
+	globalDir, err := config.GetGlobalDir()
+	if err != nil {
+		return ""
+	}
+	vs, err := config.LoadSingleFileVersioned(globalDir)
+	if err != nil || vs == nil {
+		return ""
+	}
+	return vs.ResolveImageRegistry("")
+}
+
+// RecheckAllImageStatuses re-checks image availability for all active
+// harness configs concurrently. Called at server startup after bootstrap completes.
+func (s *Server) RecheckAllImageStatuses(ctx context.Context) {
+	result, err := s.store.ListHarnessConfigs(ctx, store.HarnessConfigFilter{
+		Status: store.HarnessConfigStatusActive,
+	}, store.ListOptions{Limit: 1000})
+	if err != nil {
+		slog.Error("failed to list harness configs for image recheck", "error", err)
+		return
+	}
+
+	g, gctx := errgroup.WithContext(ctx)
+	g.SetLimit(5)
+	for _, hc := range result.Items {
+		if hc.Config == nil || hc.Config.Image == "" {
+			continue
+		}
+		id, image := hc.ID, hc.Config.Image
+		g.Go(func() error {
+			s.checkAndUpdateImageStatus(gctx, id, image)
+			return nil
+		})
+	}
+	_ = g.Wait()
 }
