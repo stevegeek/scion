@@ -118,6 +118,9 @@ export class ScionPageHarnessConfigDetail extends LitElement {
   @state()
   private deleteError = '';
 
+  @state()
+  private resolvedImage = '';
+
   private fileBrowserDataSource: FileBrowserDataSource | null = null;
   private fileEditorDataSource: FileEditorDataSource | null = null;
   private buildPollTimer: ReturnType<typeof setTimeout> | null = null;
@@ -603,7 +606,8 @@ export class ScionPageHarnessConfigDetail extends LitElement {
   private renderImageSection() {
     const hc = this.harnessConfig!;
     const image = hc.config?.image;
-    const showSection = image || this.hasDockerfile;
+    const hasImageStatus = !!hc.imageStatus && hc.imageStatus !== 'unknown';
+    const showSection = image || this.hasDockerfile || hasImageStatus;
     if (!showSection) return nothing;
 
     const isRemote = image ? this.isRemoteImage(image) : false;
@@ -622,6 +626,9 @@ export class ScionPageHarnessConfigDetail extends LitElement {
                 hc.imageStatus === 'invalid' ? 'Image Not Found' :
                 hc.imageStatus === 'error' ? 'Check Failed' : 'Not Checked'}
             </span>
+            ${this.resolvedImage && this.resolvedImage !== image ? html`
+              <span class="image-meta">${this.resolvedImage}</span>
+            ` : nothing}
             <sl-button size="small" variant="text" @click=${this.recheckImage}>
               <sl-icon slot="prefix" name="arrow-repeat"></sl-icon>
               Re-check
@@ -654,6 +661,8 @@ export class ScionPageHarnessConfigDetail extends LitElement {
       { method: 'POST' }
     );
     if (resp.ok) {
+      const data = await resp.json();
+      this.resolvedImage = data.resolved_image || '';
       await this.loadHarnessConfig();
     } else {
       const msg = await extractApiError(resp, `HTTP ${resp.status}`);
