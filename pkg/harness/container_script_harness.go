@@ -52,8 +52,8 @@ type ContainerScriptHarness struct {
 // harness-config directory; entry is the parsed config.yaml after settings
 // overlay.
 func NewContainerScriptHarness(configDirPath string, entry config.HarnessConfigEntry) (*ContainerScriptHarness, error) {
-	if entry.Provisioner == nil || entry.Provisioner.Type != "container-script" {
-		return nil, fmt.Errorf("container-script harness requires provisioner.type: container-script")
+	if entry.Provisioner == nil {
+		return nil, fmt.Errorf("container-script harness requires a provisioner block")
 	}
 	if entry.Harness == "" {
 		return nil, fmt.Errorf("container-script harness requires harness name in config.yaml")
@@ -773,9 +773,7 @@ func expandEnvTemplate(value, agentName, agentHome, unixUsername string) string 
 }
 
 // StageCaptureAuthAssets stages capture_auth.py and its config file into the
-// harness bundle directory at agentHome/.scion/harness/. This is a shared
-// helper called by both container-script and builtin harness Provision methods
-// so the capture script is available at a known path in the container.
+// harness bundle directory at agentHome/.scion/harness/.
 //
 // configDirPath is the harness-config directory containing capture_auth.py.
 // authMeta provides the required_files declarations used to generate the

@@ -18,8 +18,6 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
-	"os"
-	"path/filepath"
 
 	"github.com/GoogleCloudPlatform/scion/pkg/api"
 	"github.com/GoogleCloudPlatform/scion/pkg/config"
@@ -32,8 +30,7 @@ import (
 // the same precedence used by config.FindHarnessConfigDir (template, project,
 // global) and merges any settings overrides via VersionedSettings.
 //
-// Legacy callers without harness-config context can use the harness.New shim,
-// which preserves built-in behavior.
+// Legacy callers without harness-config context can use the harness.New shim.
 type ResolveOptions struct {
 	Name          string                    // harness-config name (e.g. "claude")
 	ProjectPath   string                    // optional project path for resolution
@@ -51,18 +48,16 @@ type ResolvedHarness struct {
 	ConfigName     string
 	ConfigDir      *config.HarnessConfigDir
 	Config         config.HarnessConfigEntry
-	Implementation string // builtin | container-script | generic
+	Implementation string // container-script | generic
 }
 
 // Resolve constructs an api.Harness using the priority order from the design:
 //
-//  1. Explicit container-script harness (provisioner.type: container-script)
-//  2. Built-in Go harness for known harness types
-//  3. Declarative generic harness (config.yaml only)
+//  1. Container-script harness (provisioner block present)
+//  2. Declarative generic harness (config.yaml only)
 //
-// For (1) the resolved harness-config dir must exist and contain provision.py
-// (the activation step in Phase 1 enforces this). For (2)-(3) the harness-
-// config dir is optional.
+// For (1) the resolved harness-config dir must exist and contain provision.py.
+// For (2) the harness-config dir is optional.
 func Resolve(_ context.Context, opts ResolveOptions) (*ResolvedHarness, error) {
 	if opts.Name == "" {
 		return nil, fmt.Errorf("harness.Resolve requires a name")
@@ -91,8 +86,8 @@ func Resolve(_ context.Context, opts ResolveOptions) (*ResolvedHarness, error) {
 		entry.Harness = opts.Name
 	}
 
-	// 1. Explicit container-script
-	if entry.Provisioner != nil && entry.Provisioner.Type == "container-script" {
+	// 1. Container-script harness (provisioner block present)
+	if entry.Provisioner != nil {
 		if hcDir == nil || hcDir.Path == "" {
 			return nil, fmt.Errorf("container-script harness %q requires an on-disk harness-config directory: %w", opts.Name, hcErr)
 		}
@@ -109,31 +104,17 @@ func Resolve(_ context.Context, opts ResolveOptions) (*ResolvedHarness, error) {
 		}, nil
 	}
 
-	// 2. Built-in
-	if builtin := newBuiltin(entry.Harness); builtin != nil {
-		return &ResolvedHarness{
-			Harness:        builtin,
-			ConfigName:     opts.Name,
-			ConfigDir:      hcDir,
-			Config:         entry,
-			Implementation: "builtin",
-		}, nil
-	}
-
 	if entry.Harness == "opencode" || entry.Harness == "codex" {
 		if hcDir == nil {
 			slog.Warn("harness is not installed; run: scion harness-config install harnesses/"+entry.Harness, "harness", entry.Harness)
-		} else if entry.Provisioner == nil || entry.Provisioner.Type != "container-script" {
-			hint := "run: scion harness-config upgrade " + opts.Name + " --activate-script"
-			if !fileExistsInDir(hcDir.Path, "provision.py") {
-				hint = "run: scion harness-config install harnesses/" + entry.Harness
-			}
-			slog.Warn("legacy built-in harness config no longer has a compiled-in implementation; "+hint,
+		} else if entry.Provisioner == nil {
+			hint := "run: scion harness-config install harnesses/" + entry.Harness
+			slog.Warn("harness config has no provisioner; "+hint,
 				"harness", entry.Harness, "config_dir", hcDir.Path)
 		}
 	}
 
-	// 3. Declarative generic. If config.yaml has declarative metadata
+	// 2. Declarative generic. If config.yaml has declarative metadata
 	// (command/env_template/capabilities), use the declarative wrapper so
 	// callers get those fields. Otherwise fall back to the legacy Generic.
 	if hasDeclarativeMetadata(entry) {
@@ -153,16 +134,6 @@ func Resolve(_ context.Context, opts ResolveOptions) (*ResolvedHarness, error) {
 		Config:         entry,
 		Implementation: "generic",
 	}, nil
-}
-
-// newBuiltin returns the compiled-in harness for the given harness type, or
-// nil if none exists.
-func newBuiltin(harnessName string) api.Harness {
-	switch harnessName {
-	case "gemini":
-		return &GeminiCLI{}
-	}
-	return nil
 }
 
 // mergeHarnessConfigEntries overlays settings overrides on top of the
@@ -205,11 +176,6 @@ func mergeHarnessConfigEntries(base, overlay config.HarnessConfigEntry) config.H
 		base.Secrets = overlay.Secrets
 	}
 	return base
-}
-
-func fileExistsInDir(dir, name string) bool {
-	_, err := os.Stat(filepath.Join(dir, name))
-	return err == nil
 }
 
 func hasDeclarativeMetadata(entry config.HarnessConfigEntry) bool {
