@@ -572,7 +572,8 @@ type AgentInfo struct {
 	Annotations map[string]string `json:"annotations,omitempty"`
 
 	// Status fields
-	ContainerStatus string       `json:"containerStatus,omitempty"` // Container status (e.g., Up 2 hours)
+	ContainerStatus string       `json:"containerStatus,omitempty"` // Raw runtime status text (e.g., Up 2 hours)
+	ContainerState  string       `json:"containerState,omitempty"`  // Canonical container state: none|created|running|exited
 	Phase           string       `json:"phase,omitempty"`           // Lifecycle phase (created, provisioning, running, stopped, error)
 	Activity        string       `json:"activity,omitempty"`        // Runtime activity (working, thinking, executing, waiting_for_input, completed)
 	Detail          *AgentDetail `json:"detail,omitempty"`          // Freeform context about the current activity

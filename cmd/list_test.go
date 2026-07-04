@@ -16,6 +16,7 @@ package cmd
 
 import (
 	"bytes"
+	"encoding/json"
 	"os"
 	"strings"
 	"testing"
@@ -166,6 +167,69 @@ func TestDisplayAgentsLocalMode(t *testing.T) {
 	// Verify second agent row shows "-" for missing harness config
 	if !strings.Contains(lines[2], "-") {
 		t.Errorf("agent-2 row should contain '-' for missing values: %s", lines[2])
+	}
+}
+
+func TestDisplayAgentsJSONContainerState(t *testing.T) {
+	// Restore the package-level output format after the test.
+	origOutputFormat := outputFormat
+	defer func() { outputFormat = origOutputFormat }()
+	outputFormat = "json"
+
+	agents := []api.AgentInfo{
+		{Name: "up-agent", ID: "c1", ContainerStatus: "Up 6 seconds"},
+		{Name: "exited-agent", ID: "c2", ContainerStatus: "Exited (1) 4 minutes ago"},
+		{Name: "stopped-agent", ID: "c3", ContainerStatus: "stopped"},
+		{Name: "created-agent", ID: "c4", ContainerStatus: "created"},
+		{Name: "none-agent", ContainerStatus: "created"}, // no live container (empty ID)
+	}
+
+	// Capture stdout
+	old := os.Stdout
+	r, w, _ := os.Pipe()
+	os.Stdout = w
+
+	err := displayAgents(agents, false, false)
+	w.Close()
+	os.Stdout = old
+
+	if err != nil {
+		t.Fatalf("displayAgents returned error: %v", err)
+	}
+
+	var buf bytes.Buffer
+	buf.ReadFrom(r)
+
+	var decoded []api.AgentInfo
+	if err := json.Unmarshal(buf.Bytes(), &decoded); err != nil {
+		t.Fatalf("failed to decode JSON output: %v\n%s", err, buf.String())
+	}
+	if len(decoded) != len(agents) {
+		t.Fatalf("expected %d agents, got %d", len(agents), len(decoded))
+	}
+
+	want := []struct {
+		name       string
+		wantStatus string // containerStatus must be preserved byte-for-byte
+		wantState  string // canonical containerState
+	}{
+		{"up-agent", "Up 6 seconds", "running"},
+		{"exited-agent", "Exited (1) 4 minutes ago", "exited"},
+		{"stopped-agent", "stopped", "exited"},
+		{"created-agent", "created", "created"},
+		{"none-agent", "created", "none"},
+	}
+	for i, tc := range want {
+		got := decoded[i]
+		if got.Name != tc.name {
+			t.Fatalf("agent %d: name = %q, want %q", i, got.Name, tc.name)
+		}
+		if got.ContainerStatus != tc.wantStatus {
+			t.Errorf("%s: containerStatus = %q, want unchanged raw %q", tc.name, got.ContainerStatus, tc.wantStatus)
+		}
+		if got.ContainerState != tc.wantState {
+			t.Errorf("%s: containerState = %q, want canonical %q", tc.name, got.ContainerState, tc.wantState)
+		}
 	}
 }
 

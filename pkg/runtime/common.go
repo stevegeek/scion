@@ -922,6 +922,37 @@ func phaseFromContainerStatus(status string) string {
 	}
 }
 
+// CanonicalContainerState maps a raw runtime status string to a stable,
+// equality-matchable vocabulary suitable for machine consumers. The input may be
+// raw container-runtime text ("Up 6 seconds", "Exited (1) 4 minutes ago") or an
+// already-canonical lifecycle token ("stopped", "created") depending on whether a
+// live container was observed, so this normalizes both into one vocabulary:
+//
+//	""                    -> "none"    (no container observed)
+//	"created"             -> "created"
+//	"up …" / "running"    -> "running"
+//	"exited …" / "stopped" -> "exited"
+//	anything else         -> "unknown"
+//
+// It reuses the same prefix/equality idiom as phaseFromContainerStatus so the two
+// stay consistent, but it distinguishes "none" from "created" and reports
+// unexpected input as "unknown" rather than silently bucketing it as "created".
+func CanonicalContainerState(status string) string {
+	lower := strings.ToLower(status)
+	switch {
+	case lower == "":
+		return "none"
+	case lower == "created":
+		return "created"
+	case strings.HasPrefix(lower, "up") || lower == "running":
+		return "running"
+	case strings.HasPrefix(lower, "exited") || lower == "stopped":
+		return "exited"
+	default:
+		return "unknown"
+	}
+}
+
 // exitedStatusRe matches the exit code in container-runtime status strings such
 // as "Exited (137) 2 minutes ago" (Docker/Podman) or "exited (0)".
 var exitedStatusRe = regexp.MustCompile(`(?i)exited\s*\((\d+)\)`)

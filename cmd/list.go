@@ -405,6 +405,18 @@ func displayAgents(agents []api.AgentInfo, all bool, hubMode bool) error {
 		if agents == nil {
 			agents = []api.AgentInfo{}
 		}
+		// Populate the canonical containerState alongside the raw containerStatus
+		// so machine consumers can equality-match instead of parsing human text.
+		// Deriving it here at the display boundary covers every population source
+		// (live podman/docker text, plus the "created"/"stopped" tokens written by
+		// the directory-walk fallback and hub lifecycle) without touching them.
+		for i := range agents {
+			if agents[i].ContainerStatus == "created" && agents[i].ID == "" {
+				agents[i].ContainerState = "none"
+			} else {
+				agents[i].ContainerState = runtime.CanonicalContainerState(agents[i].ContainerStatus)
+			}
+		}
 		enc := json.NewEncoder(os.Stdout)
 		enc.SetIndent("", "  ")
 		return enc.Encode(agents)

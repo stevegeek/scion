@@ -1553,6 +1553,32 @@ func TestExitCodeFromContainerStatus(t *testing.T) {
 	}
 }
 
+func TestCanonicalContainerState(t *testing.T) {
+	tests := []struct {
+		status string
+		want   string
+	}{
+		{"", "none"},
+		{"created", "created"},
+		{"Created", "created"},
+		{"Up 6 seconds", "running"},
+		{"Up Less than a second", "running"},
+		{"running", "running"},
+		{"Exited (0) 3 hours ago", "exited"},
+		{"Exited (137) 2 minutes ago", "exited"},
+		{"stopped", "exited"},
+		{"paused", "unknown"},
+		{"some unexpected text", "unknown"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.status, func(t *testing.T) {
+			if got := CanonicalContainerState(tc.status); got != tc.want {
+				t.Errorf("CanonicalContainerState(%q) = %q, want %q", tc.status, got, tc.want)
+			}
+		})
+	}
+}
+
 func TestParseDockerServerVersion(t *testing.T) {
 	tests := []struct {
 		in        string
