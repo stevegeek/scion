@@ -795,20 +795,28 @@ func startAgentViaHub(hubCtx *HubContext, agentName, task string, resume bool, i
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 
-	// Check if the agent is suspended on the hub; if so, start implicitly
-	// resumes the session. This check is best-effort — if it fails (agent
-	// doesn't exist yet), we fall through to "Starting".
+	// Check if the agent already exists on the hub in a state that `start`
+	// should implicitly resume. A suspended agent resumes its session; a
+	// stopped agent restarts in-place (the server supports this when
+	// Resume=true, mirroring `scion resume`). A crash or power-off leaves an
+	// agent in exactly these states, so `start` must handle both rather than
+	// hard-409ing on the stopped one. Running/error agents are left alone so
+	// the duplicate 409 still fires. This check is best-effort — if it fails
+	// (agent doesn't exist yet), we fall through to "Starting".
 	if !resume {
 		suspendCheckStart := time.Now()
 		checkCtx, checkCancel := context.WithTimeout(context.Background(), 5*time.Second)
 		existing, getErr := hubCtx.Client.ProjectAgents(projectID).Get(checkCtx, agentName)
 		checkCancel()
 		if debugMode {
-			util.Debugf("[startup] suspend check completed in %s (err=%v)", time.Since(suspendCheckStart), getErr)
+			util.Debugf("[startup] resume check completed in %s (err=%v)", time.Since(suspendCheckStart), getErr)
 		}
-		if getErr == nil && existing != nil && existing.Phase == string(state.PhaseSuspended) {
-			resume = true
-			req.Resume = true
+		if getErr == nil && existing != nil {
+			switch existing.Phase {
+			case string(state.PhaseSuspended), string(state.PhaseStopped):
+				resume = true
+				req.Resume = true
+			}
 		}
 	}
 

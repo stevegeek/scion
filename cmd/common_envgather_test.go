@@ -289,6 +289,180 @@ func TestStartAgentViaHub_GlobalGroveSkipsWorkspaceBootstrap(t *testing.T) {
 	assert.Empty(t, captured.WorkspaceFiles)
 }
 
+// TestStartAgentViaHub_StoppedAgentRestartsInsteadOf409 verifies that
+// `scion start` on an agent in phase "stopped" implicitly resumes it
+// (Resume=true), matching the server's in-place restart path, rather than
+// hitting the duplicate-agent 409. This mirrors the existing suspended
+// auto-resume behavior.
+func TestStartAgentViaHub_StoppedAgentRestartsInsteadOf409(t *testing.T) {
+	origOutputFormat := outputFormat
+	origTemplateName := templateName
+	origRuntimeBrokerID := runtimeBrokerID
+	defer func() {
+		outputFormat = origOutputFormat
+		templateName = origTemplateName
+		runtimeBrokerID = origRuntimeBrokerID
+	}()
+
+	outputFormat = "json"
+	templateName = ""
+	runtimeBrokerID = tid("broker-1")
+
+	globalDir := t.TempDir()
+	settingsPath := filepath.Join(globalDir, "settings.yaml")
+	require.NoError(t, os.WriteFile(settingsPath, []byte("hub:\n  enabled: true\n"), 0644))
+	require.NoError(t, os.WriteFile(filepath.Join(globalDir, "state.yaml"), []byte("syncedAgents: []\n"), 0644))
+
+	projectID := "proj-stopped"
+	agentName := "stopped-agent"
+	var captured *hubclient.CreateAgentRequest
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/projects/"+projectID:
+			json.NewEncoder(w).Encode(map[string]interface{}{
+				"id":   projectID,
+				"name": "stopped-project",
+			})
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/projects/"+projectID+"/agents/"+agentName:
+			// Suspend-check GET: report the agent as stopped.
+			json.NewEncoder(w).Encode(&hubclient.Agent{
+				ID:    tid("agent-1"),
+				Slug:  agentName,
+				Name:  agentName,
+				Phase: "stopped",
+			})
+		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/projects/"+projectID+"/agents":
+			var req hubclient.CreateAgentRequest
+			require.NoError(t, json.NewDecoder(r.Body).Decode(&req))
+			captured = &req
+			// The server only restarts a stopped agent in-place when
+			// Resume=true; otherwise it rejects the create as a duplicate.
+			if !req.Resume {
+				w.WriteHeader(http.StatusConflict)
+				json.NewEncoder(w).Encode(map[string]interface{}{
+					"error": map[string]interface{}{
+						"code":    "conflict",
+						"message": "agent \"" + agentName + "\" already exists in this project",
+					},
+				})
+				return
+			}
+			json.NewEncoder(w).Encode(&hubclient.CreateAgentResponse{
+				Agent: &hubclient.Agent{
+					ID:                tid("agent-1"),
+					Slug:              agentName,
+					Name:              agentName,
+					Status:            "running",
+					Phase:             "running",
+					RuntimeBrokerID:   tid("broker-1"),
+					RuntimeBrokerName: "scion",
+					Created:           time.Now().UTC(),
+				},
+			})
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	client, err := hubclient.New(server.URL)
+	require.NoError(t, err)
+
+	hubCtx := &HubContext{
+		Client:      client,
+		Endpoint:    server.URL,
+		ProjectID:   projectID,
+		ProjectPath: settingsPath,
+		IsGlobal:    true,
+	}
+
+	// start (resume=false) on a stopped agent must succeed by implicitly resuming.
+	err = startAgentViaHub(hubCtx, agentName, "hello", false, nil)
+	require.NoError(t, err)
+	require.NotNil(t, captured)
+	assert.True(t, captured.Resume, "start on a stopped agent should send Resume=true")
+}
+
+// TestStartAgentViaHub_RunningAgentStillConflicts verifies that `scion start`
+// on a RUNNING agent remains an error (start on running is not a resume). The
+// stopped/suspended auto-resume must not weaken the duplicate guard.
+func TestStartAgentViaHub_RunningAgentStillConflicts(t *testing.T) {
+	origOutputFormat := outputFormat
+	origTemplateName := templateName
+	origRuntimeBrokerID := runtimeBrokerID
+	defer func() {
+		outputFormat = origOutputFormat
+		templateName = origTemplateName
+		runtimeBrokerID = origRuntimeBrokerID
+	}()
+
+	outputFormat = "json"
+	templateName = ""
+	runtimeBrokerID = tid("broker-1")
+
+	globalDir := t.TempDir()
+	settingsPath := filepath.Join(globalDir, "settings.yaml")
+	require.NoError(t, os.WriteFile(settingsPath, []byte("hub:\n  enabled: true\n"), 0644))
+	require.NoError(t, os.WriteFile(filepath.Join(globalDir, "state.yaml"), []byte("syncedAgents: []\n"), 0644))
+
+	projectID := "proj-running"
+	agentName := "running-agent"
+	var captured *hubclient.CreateAgentRequest
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/projects/"+projectID:
+			json.NewEncoder(w).Encode(map[string]interface{}{
+				"id":   projectID,
+				"name": "running-project",
+			})
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/projects/"+projectID+"/agents/"+agentName:
+			// Suspend-check GET: report the agent as running.
+			json.NewEncoder(w).Encode(&hubclient.Agent{
+				ID:    tid("agent-1"),
+				Slug:  agentName,
+				Name:  agentName,
+				Phase: "running",
+			})
+		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/projects/"+projectID+"/agents":
+			var req hubclient.CreateAgentRequest
+			require.NoError(t, json.NewDecoder(r.Body).Decode(&req))
+			captured = &req
+			// Server rejects a duplicate running agent regardless of Resume.
+			w.WriteHeader(http.StatusConflict)
+			json.NewEncoder(w).Encode(map[string]interface{}{
+				"error": map[string]interface{}{
+					"code":    "conflict",
+					"message": "agent \"" + agentName + "\" already exists in this project",
+				},
+			})
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	client, err := hubclient.New(server.URL)
+	require.NoError(t, err)
+
+	hubCtx := &HubContext{
+		Client:      client,
+		Endpoint:    server.URL,
+		ProjectID:   projectID,
+		ProjectPath: settingsPath,
+		IsGlobal:    true,
+	}
+
+	// start (resume=false) on a running agent must not be treated as a resume.
+	err = startAgentViaHub(hubCtx, agentName, "hello", false, nil)
+	require.Error(t, err)
+	require.NotNil(t, captured)
+	assert.False(t, captured.Resume, "start on a running agent must not send Resume=true")
+}
+
 // newEnvGatherMockHubServer creates a mock Hub server that handles the SubmitEnv
 // endpoint and captures the submitted environment variables.
 func newEnvGatherMockHubServer(t *testing.T, projectID string) (*httptest.Server, *map[string]string) {
