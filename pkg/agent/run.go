@@ -26,6 +26,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/GoogleCloudPlatform/scion/pkg/api"
 	"github.com/GoogleCloudPlatform/scion/pkg/apiclient"
@@ -37,6 +38,21 @@ import (
 )
 
 var ErrTmuxBinaryNotFound = errors.New("tmux binary not found")
+
+// Liveness settle-poll tuning for the post-start verification in Start.
+//
+// A container's main process is spawned quickly, but in-container init still
+// has to synchronize UID/GID and run pre-start hooks before the harness is
+// ready; a failing hook can exit the container a few seconds after launch.
+// livenessSettleWindow bounds how long Start watches a freshly launched
+// container for that late failure. The observed hook-failure latency is on the
+// order of ~6s, so the window is sized well above it; healthy starts return as
+// soon as the "scion" tmux session is up and never wait the full window. Both
+// are vars (not consts) so tests can shrink them.
+var (
+	livenessSettleWindow = 15 * time.Second
+	livenessPollInterval = 1 * time.Second
+)
 
 func classifyLaunchRuntimeError(err error, resolvedImage string) error {
 	if err == nil {
@@ -978,28 +994,92 @@ authDone:
 		util.Debugf("Start: failed to update local agent status to %q: %v", status, updateErr)
 	}
 
-	// Fetch fresh info and verify the container is actually running
-	allAgents, err := m.Runtime.List(ctx, map[string]string{"scion.name": slug})
-	if err == nil {
-		for _, a := range allAgents {
-			if a.ContainerID == id || strings.EqualFold(a.Name, opts.Name) {
-				// Check if the container has already exited
-				containerStatus := strings.ToLower(a.ContainerStatus)
-				if strings.Contains(containerStatus, "exited") || strings.Contains(containerStatus, "dead") {
-					// Try to get logs for diagnosis
-					logs, _ := m.Runtime.GetLogs(ctx, id)
-					_ = m.Runtime.Delete(ctx, id)
-					return nil, fmt.Errorf("container started but exited immediately (status: %s). Container logs:\n%s", a.ContainerStatus, logs)
+	finalize := func(a *api.AgentInfo) *api.AgentInfo {
+		a.Detached = detached
+		a.Warnings = warnings
+		a.Phase = status
+		a.HarnessConfig = harnessConfigName
+		a.HarnessConfigRevision = harnessConfigRevision
+		a.HarnessAuth = opts.HarnessAuth
+		a.Profile = profileName
+		return a
+	}
+
+	// Verify the container is actually running before declaring success.
+	//
+	// Runtime.Run returns as soon as the container's main process is spawned
+	// (~1s), but in-container init still has to synchronize UID/GID and run
+	// pre-start hooks before it launches the "scion" tmux session. A failing
+	// pre-start hook can exit the container several seconds after Run returns,
+	// so a single immediate status check can observe a container that is
+	// momentarily "Up" but about to die and wrongly report success. We settle-
+	// poll within a bounded window instead:
+	//
+	//   - exited/dead status -> fail fast with the existing "container started
+	//     but exited immediately" error;
+	//   - the "scion" tmux session is up -> the harness is ready, so succeed
+	//     immediately. This is the same positive readiness signal the attach
+	//     paths use (waitForTmuxSession); it only appears after the pre-start
+	//     hooks complete, so it cannot race ahead of a hook failure and it
+	//     keeps healthy starts off the full window;
+	//   - still "Up" but no tmux session yet -> keep polling until the window
+	//     elapses, then trust the still-"Up" container (today's behavior)
+	//     rather than report a false failure;
+	//   - not found in the listing at all -> stop and fall through to the
+	//     existing "could not be verified" path, exactly as before (we only
+	//     wall the window while the container is actually observed running).
+	deadline := time.Now().Add(livenessSettleWindow)
+	var lastSeen *api.AgentInfo
+	for {
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return nil, ctxErr
+		}
+
+		allAgents, listErr := m.Runtime.List(ctx, map[string]string{"scion.name": slug})
+		found := false
+		if listErr == nil {
+			for i := range allAgents {
+				a := allAgents[i]
+				if a.ContainerID == id || strings.EqualFold(a.Name, opts.Name) {
+					found = true
+					containerStatus := strings.ToLower(a.ContainerStatus)
+					if strings.Contains(containerStatus, "exited") || strings.Contains(containerStatus, "dead") {
+						// Try to get logs for diagnosis
+						logs, _ := m.Runtime.GetLogs(ctx, id)
+						_ = m.Runtime.Delete(ctx, id)
+						return nil, fmt.Errorf("container started but exited immediately (status: %s). Container logs:\n%s", a.ContainerStatus, logs)
+					}
+					lastSeen = &a
+					// Positive readiness: the harness has launched its tmux
+					// session, which only happens once the pre-start hooks have
+					// succeeded.
+					if _, execErr := m.Runtime.Exec(ctx, id, []string{"tmux", "has-session", "-t", "scion"}); execErr == nil {
+						return finalize(&a), nil
+					}
+					break
 				}
-				a.Detached = detached
-				a.Warnings = warnings
-				a.Phase = status
-				a.HarnessConfig = harnessConfigName
-				a.HarnessConfigRevision = harnessConfigRevision
-				a.HarnessAuth = opts.HarnessAuth
-				a.Profile = profileName
-				return &a, nil
 			}
+		}
+
+		// Only settle-poll while the container is actively observed running.
+		// If it is not in the listing (never appeared, or exited and was
+		// already removed), stop and use the unverified fallthrough below,
+		// exactly as the pre-settle-poll code did.
+		if !found {
+			break
+		}
+
+		// Window elapsed while the container was still "Up" but the tmux
+		// session was never observed. Trust the running container rather than
+		// report a false failure (today's behavior).
+		if !time.Now().Before(deadline) {
+			return finalize(lastSeen), nil
+		}
+
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-time.After(livenessPollInterval):
 		}
 	}
 

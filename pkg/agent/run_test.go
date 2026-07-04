@@ -16,12 +16,15 @@ package agent
 
 import (
 	"context"
+	"errors"
 	"os"
 	"os/user"
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/GoogleCloudPlatform/scion/pkg/api"
 	"github.com/GoogleCloudPlatform/scion/pkg/config"
@@ -2600,5 +2603,284 @@ runtimes:
 	}
 	if got := envMap["GOOGLE_CLOUD_REGION"]; got != "us-central1" {
 		t.Errorf("GOOGLE_CLOUD_REGION = %q, want %q", got, "us-central1")
+	}
+}
+
+// --- Post-start liveness settle-poll tests ---------------------------------
+//
+// These exercise the bounded settle-poll added to Start's post-launch
+// verification. Runtime.Run returns as soon as the container process is
+// spawned, but an in-container pre-start hook can still fail a few seconds
+// later; a single immediate status check races that failure and can report a
+// false success. The settle-poll fails fast on an observed exit, returns as
+// soon as the "scion" tmux session is up, and only walls the full window when
+// neither signal appears.
+
+// setupLivenessProject builds the minimal project/template scaffold needed for
+// Start to reach the launch + verification block (mirrors
+// TestStartResolvesHarnessConfigUserFromAbsTemplateDir). It returns the project
+// .scion path and the absolute template path.
+func setupLivenessProject(t *testing.T) (projectScionPath, templatePath string) {
+	t.Helper()
+	tmpDir := t.TempDir()
+
+	oldWd, _ := os.Getwd()
+	if err := os.Chdir(tmpDir); err != nil {
+		t.Fatalf("chdir: %v", err)
+	}
+	t.Cleanup(func() { os.Chdir(oldWd) })
+
+	originalHome := os.Getenv("HOME")
+	t.Cleanup(func() { os.Setenv("HOME", originalHome) })
+	os.Setenv("HOME", tmpDir)
+
+	globalScionDir := filepath.Join(tmpDir, ".scion")
+
+	tplDir := filepath.Join(tmpDir, "template-cache", "web-dev")
+	hcDir := filepath.Join(tplDir, "harness-configs", "claude-web")
+	os.MkdirAll(hcDir, 0755)
+	os.WriteFile(filepath.Join(hcDir, "config.yaml"), []byte("harness: claude\nuser: scion\nimage: scion-claude:latest\n"), 0644)
+	os.MkdirAll(filepath.Join(hcDir, "home"), 0755)
+	os.WriteFile(filepath.Join(tplDir, "scion-agent.json"), []byte(`{"default_harness_config": "claude-web"}`), 0644)
+
+	os.MkdirAll(globalScionDir, 0755)
+	os.WriteFile(filepath.Join(globalScionDir, "settings.yaml"), []byte(`schema_version: "1"
+active_profile: local
+profiles:
+  local:
+    runtime: docker
+`), 0644)
+
+	projectDir := filepath.Join(tmpDir, "project")
+	projectScionDir := filepath.Join(projectDir, ".scion")
+	os.MkdirAll(projectScionDir, 0755)
+
+	return projectScionDir, tplDir
+}
+
+// shrinkLivenessTunables temporarily shrinks the settle-poll window/interval so
+// tests run fast, restoring the defaults on cleanup.
+func shrinkLivenessTunables(t *testing.T, window, interval time.Duration) {
+	t.Helper()
+	oldWindow, oldInterval := livenessSettleWindow, livenessPollInterval
+	livenessSettleWindow, livenessPollInterval = window, interval
+	t.Cleanup(func() { livenessSettleWindow, livenessPollInterval = oldWindow, oldInterval })
+}
+
+// TestStartDetectsDelayedContainerExit is the regression test for the false
+// success bug: the container is "Up" when Run returns but exits a few polls
+// later (an in-container pre-start hook failing ~6s in). Under the old
+// single-poll check this returned success; the settle-poll must surface the
+// existing "exited immediately" error and delete the dead container.
+func TestStartDetectsDelayedContainerExit(t *testing.T) {
+	projectScion, tpl := setupLivenessProject(t)
+	shrinkLivenessTunables(t, 2*time.Second, 5*time.Millisecond)
+
+	var listCalls, deletes int32
+	mockRT := &runtime.MockRuntime{
+		RunFunc: func(ctx context.Context, config runtime.RunConfig) (string, error) {
+			return "cid-delayed", nil
+		},
+		ListFunc: func(ctx context.Context, labelFilter map[string]string) ([]api.AgentInfo, error) {
+			n := atomic.AddInt32(&listCalls, 1)
+			if n == 1 {
+				// Early create-check: no pre-existing container.
+				return []api.AgentInfo{}, nil
+			}
+			status := "Up 1 second"
+			if n >= 4 {
+				// The pre-start hook has now failed and the container exited.
+				status = "Exited (1) Less than a second ago"
+			}
+			return []api.AgentInfo{{
+				ContainerID:     "cid-delayed",
+				Name:            "test-agent",
+				ContainerStatus: status,
+			}}, nil
+		},
+		ExecFunc: func(ctx context.Context, id string, cmd []string) (string, error) {
+			// tmux session never comes up because the hook failed.
+			return "", errors.New("no server running on /tmp/tmux")
+		},
+		GetLogsFunc: func(ctx context.Context, id string) (string, error) {
+			return "pre-start hook failed: boom", nil
+		},
+		DeleteFunc: func(ctx context.Context, id string) error {
+			atomic.AddInt32(&deletes, 1)
+			return nil
+		},
+	}
+
+	mgr := NewManager(mockRT)
+	_, err := mgr.Start(context.Background(), api.StartOptions{
+		Name:        "test-agent",
+		Template:    tpl,
+		ProjectPath: projectScion,
+		NoAuth:      true,
+	})
+	if err == nil {
+		t.Fatal("expected an error for a container that exits after start, got nil")
+	}
+	if !strings.Contains(err.Error(), "exited immediately") {
+		t.Fatalf("expected an 'exited immediately' error, got: %v", err)
+	}
+	if atomic.LoadInt32(&deletes) == 0 {
+		t.Error("expected the exited container to be deleted")
+	}
+}
+
+// TestStartSucceedsWhenTmuxSessionReady verifies the positive-readiness path:
+// once the "scion" tmux session is observed the container is ready, so Start
+// returns success promptly without walling the full settle window.
+func TestStartSucceedsWhenTmuxSessionReady(t *testing.T) {
+	projectScion, tpl := setupLivenessProject(t)
+	shrinkLivenessTunables(t, 5*time.Second, 50*time.Millisecond)
+
+	var listCalls int32
+	mockRT := &runtime.MockRuntime{
+		RunFunc: func(ctx context.Context, config runtime.RunConfig) (string, error) {
+			return "cid-healthy", nil
+		},
+		ListFunc: func(ctx context.Context, labelFilter map[string]string) ([]api.AgentInfo, error) {
+			if atomic.AddInt32(&listCalls, 1) == 1 {
+				return []api.AgentInfo{}, nil
+			}
+			return []api.AgentInfo{{
+				ContainerID:     "cid-healthy",
+				Name:            "test-agent",
+				ContainerStatus: "Up 2 seconds",
+			}}, nil
+		},
+		ExecFunc: func(ctx context.Context, id string, cmd []string) (string, error) {
+			// tmux session is up: the harness is ready.
+			return "", nil
+		},
+	}
+
+	mgr := NewManager(mockRT)
+	started := time.Now()
+	result, err := mgr.Start(context.Background(), api.StartOptions{
+		Name:        "test-agent",
+		Template:    tpl,
+		ProjectPath: projectScion,
+		NoAuth:      true,
+	})
+	elapsed := time.Since(started)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result == nil || result.Phase != "running" {
+		t.Fatalf("expected Phase = %q, got %+v", "running", result)
+	}
+	if elapsed >= livenessSettleWindow {
+		t.Errorf("Start blocked the full settle window (%v); the tmux readiness signal should return early", elapsed)
+	}
+}
+
+// TestStartDetectsImmediateContainerExit preserves the original behavior: a
+// container already exited on the very first poll is reported as an
+// "exited immediately" error and deleted.
+func TestStartDetectsImmediateContainerExit(t *testing.T) {
+	projectScion, tpl := setupLivenessProject(t)
+	shrinkLivenessTunables(t, 2*time.Second, 5*time.Millisecond)
+
+	var listCalls, deletes int32
+	mockRT := &runtime.MockRuntime{
+		RunFunc: func(ctx context.Context, config runtime.RunConfig) (string, error) {
+			return "cid-immediate", nil
+		},
+		ListFunc: func(ctx context.Context, labelFilter map[string]string) ([]api.AgentInfo, error) {
+			if atomic.AddInt32(&listCalls, 1) == 1 {
+				return []api.AgentInfo{}, nil
+			}
+			return []api.AgentInfo{{
+				ContainerID:     "cid-immediate",
+				Name:            "test-agent",
+				ContainerStatus: "Exited (1) Less than a second ago",
+			}}, nil
+		},
+		GetLogsFunc: func(ctx context.Context, id string) (string, error) {
+			return "boom", nil
+		},
+		DeleteFunc: func(ctx context.Context, id string) error {
+			atomic.AddInt32(&deletes, 1)
+			return nil
+		},
+	}
+
+	mgr := NewManager(mockRT)
+	_, err := mgr.Start(context.Background(), api.StartOptions{
+		Name:        "test-agent",
+		Template:    tpl,
+		ProjectPath: projectScion,
+		NoAuth:      true,
+	})
+	if err == nil {
+		t.Fatal("expected an error for an immediately-exited container, got nil")
+	}
+	if !strings.Contains(err.Error(), "exited immediately") {
+		t.Fatalf("expected an 'exited immediately' error, got: %v", err)
+	}
+	if atomic.LoadInt32(&deletes) == 0 {
+		t.Error("expected the exited container to be deleted")
+	}
+}
+
+// TestStartRespectsContextCancellationDuringSettle verifies that a context
+// cancelled while the settle-poll is waiting (container still "Up", tmux not
+// yet ready) causes Start to return promptly with the cancellation error rather
+// than blocking the full window.
+func TestStartRespectsContextCancellationDuringSettle(t *testing.T) {
+	projectScion, tpl := setupLivenessProject(t)
+	shrinkLivenessTunables(t, 10*time.Second, 20*time.Millisecond)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	var listCalls int32
+	mockRT := &runtime.MockRuntime{
+		RunFunc: func(ctx context.Context, config runtime.RunConfig) (string, error) {
+			return "cid-cancel", nil
+		},
+		ListFunc: func(ctx context.Context, labelFilter map[string]string) ([]api.AgentInfo, error) {
+			if atomic.AddInt32(&listCalls, 1) == 1 {
+				// Early create-check: no pre-existing container.
+				return []api.AgentInfo{}, nil
+			}
+			// Container stays Up but never ready, so the loop keeps polling
+			// until the context is cancelled.
+			return []api.AgentInfo{{
+				ContainerID:     "cid-cancel",
+				Name:            "test-agent",
+				ContainerStatus: "Up 1 second",
+			}}, nil
+		},
+		ExecFunc: func(ctx context.Context, id string, cmd []string) (string, error) {
+			return "", errors.New("not ready")
+		},
+	}
+
+	go func() {
+		time.Sleep(40 * time.Millisecond)
+		cancel()
+	}()
+
+	mgr := NewManager(mockRT)
+	started := time.Now()
+	_, err := mgr.Start(ctx, api.StartOptions{
+		Name:        "test-agent",
+		Template:    tpl,
+		ProjectPath: projectScion,
+		NoAuth:      true,
+	})
+	elapsed := time.Since(started)
+	if err == nil {
+		t.Fatal("expected a context cancellation error, got nil")
+	}
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("expected context.Canceled, got: %v", err)
+	}
+	if elapsed >= livenessSettleWindow {
+		t.Errorf("cancellation not honored promptly (took %v)", elapsed)
 	}
 }
