@@ -118,7 +118,7 @@ func runHubAuthLogin(cmd *cobra.Command, args []string) error {
 		hubURL = getDefaultHubURL()
 	}
 	if hubURL == "" {
-		return fmt.Errorf("Hub URL not specified. Use --hub-url or configure hub.endpoint in settings")
+		return fmt.Errorf("hub URL not specified, use --hub-url or configure hub.endpoint in settings")
 	}
 
 	fmt.Printf("Authenticating with Hub at %s\n", hubURL)
@@ -184,7 +184,7 @@ func runBrowserAuthFlow(cmd *cobra.Command, client hubclient.Client, requestedPr
 	if err != nil {
 		return nil, fmt.Errorf("failed to start auth server: %w", err)
 	}
-	defer authServer.Shutdown()
+	defer func() { _ = authServer.Shutdown() }()
 
 	// Get OAuth URL from Hub
 	authResp, err := client.Auth().GetAuthURL(cmd.Context(), callbackURL, state, provider)

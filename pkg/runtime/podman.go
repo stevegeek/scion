@@ -19,9 +19,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
-	"os"
 	"os/exec"
-	goruntime "runtime"
 	"strconv"
 	"strings"
 
@@ -349,13 +347,13 @@ func (r *PodmanRuntime) Attach(ctx context.Context, id string) error {
 	}
 
 	if agent == nil {
-		return fmt.Errorf("agent '%s' container not found. It may have exited and been removed.", id)
+		return fmt.Errorf("agent '%s' container not found, it may have exited and been removed", id)
 	}
 
 	// Check if running
 	status := strings.ToLower(agent.ContainerStatus)
 	if !strings.HasPrefix(status, "up") && status != "running" {
-		return fmt.Errorf("agent '%s' is not running (status: %s). Use 'scion start %s' to resume it.", id, agent.ContainerStatus, id)
+		return fmt.Errorf("agent '%s' is not running (status: %s), use 'scion start %s' to resume it", id, agent.ContainerStatus, id)
 	}
 
 	// Ensure tmux uses the latest client's terminal size so the session
@@ -418,15 +416,16 @@ func (r *PodmanRuntime) Sync(ctx context.Context, id string, direction SyncDirec
 			if v.Source == "" {
 				continue
 			}
-			if direction == SyncTo {
+			switch direction {
+			case SyncTo:
 				if err := gcp.SyncToGCS(ctx, v.Source, v.Bucket, v.Prefix); err != nil {
 					return fmt.Errorf("failed to sync to GCS: %w", err)
 				}
-			} else if direction == SyncFrom {
+			case SyncFrom:
 				if err := gcp.SyncFromGCS(ctx, v.Bucket, v.Prefix, v.Source); err != nil {
 					return fmt.Errorf("failed to sync from GCS: %w", err)
 				}
-			} else {
+			default:
 				return fmt.Errorf("sync direction must be specified for GCS volumes")
 			}
 		}
@@ -474,30 +473,4 @@ func (r *PodmanRuntime) GetWorkspacePath(ctx context.Context, id string) (string
 	}
 
 	return "", fmt.Errorf("no /workspace mount found for container %s", id)
-}
-
-// validatePodmanMachineMounts checks that the workspace path is within the user's
-// home directory when running on macOS with Podman Machine. Podman Machine exposes
-// $HOME via virtiofs by default; paths outside $HOME won't be accessible in the VM.
-func validatePodmanMachineMounts(workspace string) error {
-	if goruntime.GOOS != "darwin" {
-		return nil
-	}
-
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return nil // Can't determine home dir, skip validation
-	}
-
-	if !strings.HasPrefix(workspace, home) {
-		return fmt.Errorf(
-			"workspace path %q is outside your home directory (%s). "+
-				"Podman Machine on macOS exposes $HOME via virtiofs by default. "+
-				"Either move your workspace under $HOME or configure additional "+
-				"Podman Machine mounts with: podman machine init --volume <path>:<path>",
-			workspace, home,
-		)
-	}
-
-	return nil
 }

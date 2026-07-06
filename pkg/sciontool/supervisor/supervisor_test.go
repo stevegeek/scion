@@ -134,7 +134,7 @@ func TestSupervisor_Signal(t *testing.T) {
 	// Start a long-running command
 	done := make(chan struct{})
 	go func() {
-		sup.Run(ctx, []string{"sleep", "60"})
+		_, _ = sup.Run(ctx, []string{"sleep", "60"})
 		close(done)
 	}()
 
@@ -161,7 +161,7 @@ func TestSupervisor_Done(t *testing.T) {
 
 	ctx := context.Background()
 
-	go sup.Run(ctx, []string{"true"})
+	go func() { _, _ = sup.Run(ctx, []string{"true"}) }()
 
 	select {
 	case <-sup.Done():
@@ -176,7 +176,7 @@ func TestSupervisor_ExitCode(t *testing.T) {
 	sup := New(config)
 
 	ctx := context.Background()
-	sup.Run(ctx, []string{"sh", "-c", "exit 7"})
+	_, _ = sup.Run(ctx, []string{"sh", "-c", "exit 7"})
 
 	if code := sup.ExitCode(); code != 7 {
 		t.Errorf("expected exit code 7, got %d", code)

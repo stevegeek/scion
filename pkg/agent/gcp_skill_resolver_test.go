@@ -38,7 +38,7 @@ func TestGCPSkillResolver_HappyPath(t *testing.T) {
 			w.WriteHeader(http.StatusUnauthorized)
 			return
 		}
-		json.NewEncoder(w).Encode(gcpSkillResponse{
+		_ = json.NewEncoder(w).Encode(gcpSkillResponse{
 			Name:    "my-skill",
 			Version: "1.0.0",
 			Files: []gcpSkillFile{
@@ -47,7 +47,7 @@ func TestGCPSkillResolver_HappyPath(t *testing.T) {
 		})
 	})
 	mux.HandleFunc("/files/SKILL.md", func(w http.ResponseWriter, _ *http.Request) {
-		w.Write([]byte(skillContent))
+		_, _ = w.Write([]byte(skillContent))
 	})
 
 	server := httptest.NewServer(mux)
@@ -61,7 +61,7 @@ func TestGCPSkillResolver_HappyPath(t *testing.T) {
 			w.WriteHeader(http.StatusUnauthorized)
 			return
 		}
-		json.NewEncoder(w).Encode(gcpSkillResponse{
+		_ = json.NewEncoder(w).Encode(gcpSkillResponse{
 			Name:    "my-skill",
 			Version: "1.0.0",
 			Files: []gcpSkillFile{
@@ -70,7 +70,7 @@ func TestGCPSkillResolver_HappyPath(t *testing.T) {
 		})
 	})
 	fixupMux.HandleFunc("/files/SKILL.md", func(w http.ResponseWriter, _ *http.Request) {
-		w.Write([]byte(skillContent))
+		_, _ = w.Write([]byte(skillContent))
 	})
 	_ = origHandler
 	server.Config.Handler = fixupMux
@@ -136,7 +136,7 @@ func TestGCPSkillResolver_MultipleFiles(t *testing.T) {
 	var server *httptest.Server
 
 	mux.HandleFunc("/skills/multi-file", func(w http.ResponseWriter, r *http.Request) {
-		json.NewEncoder(w).Encode(gcpSkillResponse{
+		_ = json.NewEncoder(w).Encode(gcpSkillResponse{
 			Name:    "multi-file",
 			Version: "2.0.0",
 			Files: []gcpSkillFile{
@@ -146,10 +146,10 @@ func TestGCPSkillResolver_MultipleFiles(t *testing.T) {
 		})
 	})
 	mux.HandleFunc("/files/SKILL.md", func(w http.ResponseWriter, _ *http.Request) {
-		w.Write([]byte(skillContent))
+		_, _ = w.Write([]byte(skillContent))
 	})
 	mux.HandleFunc("/files/config.json", func(w http.ResponseWriter, _ *http.Request) {
-		w.Write([]byte(configContent))
+		_, _ = w.Write([]byte(configContent))
 	})
 
 	server = httptest.NewServer(mux)
@@ -338,7 +338,7 @@ func TestGCPSkillResolver_ADCNotConfigured(t *testing.T) {
 
 func TestGCPSkillResolver_EmptySkillFiles(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		json.NewEncoder(w).Encode(gcpSkillResponse{
+		_ = json.NewEncoder(w).Encode(gcpSkillResponse{
 			Name:    "empty-skill",
 			Version: "1.0.0",
 			Files:   []gcpSkillFile{},
@@ -395,7 +395,7 @@ func TestGCPSkillResolver_AsAlias(t *testing.T) {
 	var server *httptest.Server
 
 	mux.HandleFunc("/skills/my-skill", func(w http.ResponseWriter, _ *http.Request) {
-		json.NewEncoder(w).Encode(gcpSkillResponse{
+		_ = json.NewEncoder(w).Encode(gcpSkillResponse{
 			Name:    "my-skill",
 			Version: "1.0.0",
 			Files: []gcpSkillFile{
@@ -404,7 +404,7 @@ func TestGCPSkillResolver_AsAlias(t *testing.T) {
 		})
 	})
 	mux.HandleFunc("/files/SKILL.md", func(w http.ResponseWriter, _ *http.Request) {
-		w.Write([]byte("# content"))
+		_, _ = w.Write([]byte("# content"))
 	})
 
 	server = httptest.NewServer(mux)
@@ -439,7 +439,7 @@ func TestGCPSkillResolver_VersionMismatch(t *testing.T) {
 	var server *httptest.Server
 
 	mux.HandleFunc("/skills/my-skill", func(w http.ResponseWriter, _ *http.Request) {
-		json.NewEncoder(w).Encode(gcpSkillResponse{
+		_ = json.NewEncoder(w).Encode(gcpSkillResponse{
 			Name:    "my-skill",
 			Version: "v3",
 			Files: []gcpSkillFile{
@@ -480,7 +480,7 @@ func TestGCPSkillResolver_SSRFBlocked(t *testing.T) {
 	var server *httptest.Server
 
 	mux.HandleFunc("/skills/evil-skill", func(w http.ResponseWriter, _ *http.Request) {
-		json.NewEncoder(w).Encode(gcpSkillResponse{
+		_ = json.NewEncoder(w).Encode(gcpSkillResponse{
 			Name:    "evil-skill",
 			Version: "1.0.0",
 			Files: []gcpSkillFile{
@@ -521,7 +521,7 @@ func TestGCPSkillResolver_SSRFCrossHost(t *testing.T) {
 	var server *httptest.Server
 
 	mux.HandleFunc("/skills/cross-host", func(w http.ResponseWriter, _ *http.Request) {
-		json.NewEncoder(w).Encode(gcpSkillResponse{
+		_ = json.NewEncoder(w).Encode(gcpSkillResponse{
 			Name:    "cross-host",
 			Version: "1.0.0",
 			Files: []gcpSkillFile{

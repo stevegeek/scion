@@ -29,9 +29,8 @@ import (
 	"strings"
 	"time"
 
-	cloudbuild "cloud.google.com/go/cloudbuild/apiv1"
+	cloudbuild "cloud.google.com/go/cloudbuild/apiv1/v2"
 	cloudbuildpb "cloud.google.com/go/cloudbuild/apiv1/v2/cloudbuildpb"
-	"cloud.google.com/go/longrunning/autogen/longrunningpb"
 	gcstorage "cloud.google.com/go/storage"
 	scionruntime "github.com/GoogleCloudPlatform/scion/pkg/runtime"
 	"github.com/GoogleCloudPlatform/scion/pkg/secret"
@@ -39,7 +38,6 @@ import (
 	"github.com/GoogleCloudPlatform/scion/pkg/store"
 	"github.com/GoogleCloudPlatform/scion/pkg/transfer"
 	"github.com/GoogleCloudPlatform/scion/pkg/util/logging"
-	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/durationpb"
 	"gopkg.in/yaml.v3"
 )
@@ -644,7 +642,7 @@ func (e *CloudBuildHarnessConfigExecutor) Run(ctx context.Context, logger io.Wri
 	}
 
 	if e.gcpProject == "" {
-		return fmt.Errorf("Cloud Build requires a GCP project ID. Configure gcp_project_id in settings")
+		return fmt.Errorf("cloud Build requires a GCP project ID, configure gcp_project_id in settings")
 	}
 
 	tag := e.tag
@@ -661,7 +659,7 @@ func (e *CloudBuildHarnessConfigExecutor) Run(ctx context.Context, logger io.Wri
 	}
 	registry = strings.TrimSuffix(registry, "/")
 	if registry == "" {
-		return fmt.Errorf("Cloud Build requires a registry (images must be pushed). Configure image_registry first")
+		return fmt.Errorf("cloud Build requires a registry (images must be pushed), configure image_registry first")
 	}
 
 	hc, err := e.store.GetHarnessConfig(ctx, harnessConfigID)
@@ -711,13 +709,13 @@ func (e *CloudBuildHarnessConfigExecutor) Run(ctx context.Context, logger io.Wri
 	if err != nil {
 		return fmt.Errorf("failed to create GCS client: %w", err)
 	}
-	defer gcsClient.Close()
+	defer func() { _ = gcsClient.Close() }()
 
 	// Verify the staging bucket exists before attempting upload.
 	if _, err := gcsClient.Bucket(stagingBucket).Attrs(ctx); err != nil {
 		if err == gcstorage.ErrBucketNotExist {
-			return fmt.Errorf("Cloud Build staging bucket gs://%s does not exist. "+
-				"Run 'gcloud builds submit' once manually in project %s to create it, "+
+			return fmt.Errorf("cloud Build staging bucket gs://%s does not exist; "+
+				"run 'gcloud builds submit' once manually in project %s to create it, "+
 				"or create the bucket manually", stagingBucket, e.gcpProject)
 		}
 		return fmt.Errorf("failed to access staging bucket gs://%s: %w", stagingBucket, err)
@@ -763,7 +761,7 @@ func (e *CloudBuildHarnessConfigExecutor) Run(ctx context.Context, logger io.Wri
 	if err != nil {
 		return fmt.Errorf("failed to create Cloud Build client: %w", err)
 	}
-	defer cbClient.Close()
+	defer func() { _ = cbClient.Close() }()
 
 	build := &cloudbuildpb.Build{
 		Source: &cloudbuildpb.Source{
@@ -856,16 +854,16 @@ func (e *CloudBuildHarnessConfigExecutor) Run(ctx context.Context, logger io.Wri
 
 		case cloudbuildpb.Build_FAILURE:
 			streamCloudBuildLogs(ctx, gcsClient, logBucket, logObjectPrefix+".txt", lastLogOffset, logger)
-			return fmt.Errorf("Cloud Build failed: %s", b.StatusDetail)
+			return fmt.Errorf("cloud Build failed: %s", b.StatusDetail)
 
 		case cloudbuildpb.Build_TIMEOUT:
-			return fmt.Errorf("Cloud Build timed out")
+			return fmt.Errorf("cloud Build timed out")
 
 		case cloudbuildpb.Build_CANCELLED:
-			return fmt.Errorf("Cloud Build was cancelled")
+			return fmt.Errorf("cloud Build was cancelled")
 
 		case cloudbuildpb.Build_INTERNAL_ERROR:
-			return fmt.Errorf("Cloud Build internal error: %s", b.StatusDetail)
+			return fmt.Errorf("cloud Build internal error: %s", b.StatusDetail)
 		}
 
 		select {
@@ -949,9 +947,9 @@ func syncBuiltImage(ctx context.Context, stor storage.Storage, storeDB store.Sto
 // createTarGz creates a tar.gz archive from the contents of srcDir.
 func createTarGz(srcDir string, w io.Writer) error {
 	gzw := gzip.NewWriter(w)
-	defer gzw.Close()
+	defer func() { _ = gzw.Close() }()
 	tw := tar.NewWriter(gzw)
-	defer tw.Close()
+	defer func() { _ = tw.Close() }()
 
 	return filepath.Walk(srcDir, func(path string, info os.FileInfo, err error) error {
 		if err != nil {
@@ -983,7 +981,7 @@ func createTarGz(srcDir string, w io.Writer) error {
 		if err != nil {
 			return err
 		}
-		defer f.Close()
+		defer func() { _ = f.Close() }()
 		_, err = io.Copy(tw, f)
 		return err
 	})
@@ -991,13 +989,10 @@ func createTarGz(srcDir string, w io.Writer) error {
 
 // extractBuildID extracts the Cloud Build ID from a CreateBuild long-running
 // operation response.
-func extractBuildID(op *longrunningpb.Operation) (string, error) {
-	if op.Metadata == nil {
-		return "", fmt.Errorf("operation has no metadata")
-	}
-	var meta cloudbuildpb.BuildOperationMetadata
-	if err := proto.Unmarshal(op.Metadata.Value, &meta); err != nil {
-		return "", fmt.Errorf("failed to unmarshal build operation metadata: %w", err)
+func extractBuildID(op *cloudbuild.CreateBuildOperation) (string, error) {
+	meta, err := op.Metadata()
+	if err != nil {
+		return "", fmt.Errorf("failed to get build operation metadata: %w", err)
 	}
 	if meta.Build == nil || meta.Build.Id == "" {
 		return "", fmt.Errorf("build metadata does not contain a build ID")
@@ -1012,7 +1007,7 @@ func streamCloudBuildLogs(ctx context.Context, client *gcstorage.Client, bucket,
 	if err != nil {
 		return offset
 	}
-	defer rc.Close()
+	defer func() { _ = rc.Close() }()
 
 	n, _ := io.Copy(logger, rc)
 	return offset + n

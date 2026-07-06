@@ -289,7 +289,7 @@ func mapEmbedFileToHarnessConfigPath(targetDir, homeDir, configDir, fileName str
 }
 
 func isHarnessConfigRootSupportFile(relPath string) bool {
-	if relPath == "provision.py" || relPath == "dialect.yaml" || relPath == "capture_auth.py" {
+	if relPath == "provision.py" || relPath == "dialect.yaml" || relPath == "capture_auth.py" || relPath == "scion_harness.py" {
 		return true
 	}
 	for _, prefix := range []string{"schema/", "schemas/", "examples/", "tests/fixtures/"} {
@@ -383,7 +383,7 @@ func ComputeHarnessConfigRevision(dirPath string) string {
 		if openErr != nil {
 			return nil
 		}
-		defer f.Close()
+		defer func() { _ = f.Close() }()
 		h := sha256.New()
 		if _, copyErr := io.Copy(h, f); copyErr != nil {
 			return nil

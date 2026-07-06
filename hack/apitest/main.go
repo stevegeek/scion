@@ -50,7 +50,7 @@ func req(h hub, method, path string, body any) (int, []byte, time.Duration) {
 	if err != nil {
 		return 0, []byte(err.Error()), d
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	rb, _ := io.ReadAll(resp.Body)
 	return resp.StatusCode, rb, d
 }
@@ -101,7 +101,7 @@ func main() {
 				var pr struct {
 					ID string `json:"id"`
 				}
-				json.Unmarshal(body, &pr)
+				_ = json.Unmarshal(body, &pr)
 				req(h, "GET", "/api/v1/projects/"+pr.ID, nil)
 				req(h, "GET", "/api/v1/projects?limit=5", nil)
 				dst, _, dd := req(h, "DELETE", "/api/v1/projects/"+pr.ID, nil)
@@ -143,7 +143,7 @@ func main() {
 		var pr struct {
 			ID string `json:"id"`
 		}
-		json.Unmarshal(body, &pr)
+		_ = json.Unmarshal(body, &pr)
 		got := false
 		for attempt := 0; attempt < 10; attempt++ {
 			s2, _, _ := req(B, "GET", "/api/v1/projects/"+pr.ID, nil)
@@ -181,10 +181,10 @@ func main() {
 				defer w2.Done()
 				h := hubs[k%2]
 				st, _, _ := req(h, "POST", "/api/v1/projects", map[string]any{"id": id, "name": name})
-				switch {
-				case st == 201 || st == 200:
+				switch st {
+				case 200, 201:
 					atomic.AddInt64(&c201, 1)
-				case st == 409:
+				case 409:
 					atomic.AddInt64(&c409, 1)
 				default:
 					atomic.AddInt64(&cother, 1)
@@ -203,7 +203,7 @@ func main() {
 	// ---- Phase 4: idle-then-burst (the stale-connection scenario) ----
 	idleStr := os.Getenv("IDLE_SECONDS")
 	idle := 75
-	fmt.Sscanf(idleStr, "%d", &idle)
+	_, _ = fmt.Sscanf(idleStr, "%d", &idle)
 	fmt.Printf("== Phase 4: idle %ds then burst (validates keepalive/idle-recycle fix) ==\n", idle)
 	for _, h := range hubs { // warm the pools
 		for i := 0; i < 5; i++ {

@@ -131,7 +131,7 @@ func TestHubHandler_EventMapping(t *testing.T) {
 				}
 
 				w.WriteHeader(http.StatusOK)
-				w.Write([]byte(`{}`))
+				_, _ = w.Write([]byte(`{}`))
 			}))
 			defer server.Close()
 
@@ -206,9 +206,9 @@ func TestHubHandler_ReportMethods(t *testing.T) {
 		mu.Lock()
 		defer mu.Unlock()
 
-		json.NewDecoder(r.Body).Decode(&receivedPayload)
+		_ = json.NewDecoder(r.Body).Decode(&receivedPayload)
 		w.WriteHeader(http.StatusOK)
-		w.Write([]byte(`{}`))
+		_, _ = w.Write([]byte(`{}`))
 	}))
 	defer server.Close()
 
@@ -376,7 +376,7 @@ func TestHubHandler_StickyStatus(t *testing.T) {
 			tmpDir := t.TempDir()
 			info := map[string]interface{}{"activity": tt.localActivity}
 			data, _ := json.Marshal(info)
-			os.WriteFile(tmpDir+"/agent-info.json", data, 0644)
+			_ = os.WriteFile(tmpDir+"/agent-info.json", data, 0644)
 
 			// Point HOME to the temp dir so readLocalActivity finds our file
 			t.Setenv("HOME", tmpDir)
@@ -391,12 +391,12 @@ func TestHubHandler_StickyStatus(t *testing.T) {
 				callCount++
 
 				var payload map[string]interface{}
-				json.NewDecoder(r.Body).Decode(&payload)
+				_ = json.NewDecoder(r.Body).Decode(&payload)
 				if s, ok := payload["status"].(string); ok {
 					receivedStatus = s
 				}
 				w.WriteHeader(http.StatusOK)
-				w.Write([]byte(`{}`))
+				_, _ = w.Write([]byte(`{}`))
 			}))
 			defer server.Close()
 
@@ -495,7 +495,7 @@ func TestHubHandler_ModeBehavior(t *testing.T) {
 			callCount++
 			mu.Unlock()
 			w.WriteHeader(http.StatusOK)
-			w.Write([]byte(`{}`))
+			_, _ = w.Write([]byte(`{}`))
 		}))
 		defer server.Close()
 
@@ -533,7 +533,7 @@ func TestHubHandler_ModeBehavior(t *testing.T) {
 
 		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			w.WriteHeader(http.StatusOK)
-			w.Write([]byte(`{}`))
+			_, _ = w.Write([]byte(`{}`))
 		}))
 		defer server.Close()
 
@@ -584,7 +584,7 @@ func TestHubHandler_AssistantTextForwarding(t *testing.T) {
 			defer mu.Unlock()
 
 			var payload map[string]interface{}
-			json.NewDecoder(r.Body).Decode(&payload)
+			_ = json.NewDecoder(r.Body).Decode(&payload)
 
 			if msg, ok := payload["msg"].(string); ok {
 				// outbound-message endpoint
@@ -596,7 +596,7 @@ func TestHubHandler_AssistantTextForwarding(t *testing.T) {
 			}
 
 			w.WriteHeader(http.StatusOK)
-			w.Write([]byte(`{}`))
+			_, _ = w.Write([]byte(`{}`))
 		}))
 		defer server.Close()
 
@@ -644,14 +644,14 @@ func TestHubHandler_AssistantTextForwarding(t *testing.T) {
 			defer mu.Unlock()
 
 			var payload map[string]interface{}
-			json.NewDecoder(r.Body).Decode(&payload)
+			_ = json.NewDecoder(r.Body).Decode(&payload)
 
 			if msg, ok := payload["msg"].(string); ok {
 				outboundMsg = msg
 			}
 
 			w.WriteHeader(http.StatusOK)
-			w.Write([]byte(`{}`))
+			_, _ = w.Write([]byte(`{}`))
 		}))
 		defer server.Close()
 
@@ -710,14 +710,14 @@ func TestHubHandler_AssistantTextVisibilityTagging(t *testing.T) {
 			defer mu.Unlock()
 
 			var payload map[string]interface{}
-			json.NewDecoder(r.Body).Decode(&payload)
+			_ = json.NewDecoder(r.Body).Decode(&payload)
 
 			if _, ok := payload["msg"]; ok {
 				outboundPayload = payload
 			}
 
 			w.WriteHeader(http.StatusOK)
-			w.Write([]byte(`{}`))
+			_, _ = w.Write([]byte(`{}`))
 		}))
 		defer server.Close()
 
@@ -770,14 +770,14 @@ func TestHubHandler_AssistantTextVisibilityTagging(t *testing.T) {
 			defer mu.Unlock()
 
 			var payload map[string]interface{}
-			json.NewDecoder(r.Body).Decode(&payload)
+			_ = json.NewDecoder(r.Body).Decode(&payload)
 
 			if _, ok := payload["msg"]; ok {
 				outboundPayload = payload
 			}
 
 			w.WriteHeader(http.StatusOK)
-			w.Write([]byte(`{}`))
+			_, _ = w.Write([]byte(`{}`))
 		}))
 		defer server.Close()
 

@@ -390,7 +390,7 @@ func runBrokerRegister(cmd *cobra.Command, args []string) error {
 
 	endpoint := GetHubEndpoint(settings)
 	if endpoint == "" {
-		return fmt.Errorf("Hub endpoint not configured.\n\nConfigure the Hub endpoint via:\n  - SCION_HUB_ENDPOINT environment variable\n  - hub.endpoint in settings.yaml\n  - --hub flag on any command\n\nExample: scion config set hub.endpoint https://hub.scion.dev --global")
+		return fmt.Errorf("hub endpoint not configured; configure via SCION_HUB_ENDPOINT, hub.endpoint in settings.yaml, or --hub flag")
 	}
 
 	// Step 1: Check if local broker server is running
@@ -411,7 +411,7 @@ func runBrokerRegister(cmd *cobra.Command, args []string) error {
 
 	// Check Hub connectivity
 	if _, err := client.Health(ctx); err != nil {
-		return fmt.Errorf("Hub at %s is not responding: %w", endpoint, err)
+		return fmt.Errorf("hub at %s is not responding: %w", endpoint, err)
 	}
 
 	// Get project name for display
@@ -660,7 +660,7 @@ func runBrokerDeregister(cmd *cobra.Command, args []string) error {
 		hubName = brokerDeregisterName
 		loaded, err := multiStore.Load(hubName)
 		if err != nil {
-			return fmt.Errorf("hub connection '%s' not found.\n\nUse 'scion runtime-broker hubs' to list connections.", hubName)
+			return fmt.Errorf("hub connection '%s' not found, use 'scion runtime-broker hubs' to list connections", hubName)
 		}
 		creds = loaded
 	} else {
@@ -683,7 +683,7 @@ func runBrokerDeregister(cmd *cobra.Command, args []string) error {
 				}
 			}
 			if creds == nil {
-				return fmt.Errorf("no broker registration found.\n\nThis host is not registered as a Runtime Broker with the Hub.")
+				return fmt.Errorf("no broker registration found, this host is not registered as a Runtime Broker with the Hub")
 			}
 		case 1:
 			creds = &all[0]
@@ -699,7 +699,7 @@ func runBrokerDeregister(cmd *cobra.Command, args []string) error {
 
 	brokerID := creds.BrokerID
 	if brokerID == "" {
-		return fmt.Errorf("no broker registration found.\n\nThis host is not registered as a Runtime Broker with the Hub.")
+		return fmt.Errorf("no broker registration found, this host is not registered as a runtime broker with the hub")
 	}
 
 	// Load settings for Hub client
@@ -807,7 +807,7 @@ func runBrokerStart(cmd *cobra.Command, args []string) error {
 
 	// Check if the broker is managed by the combined server
 	if managed, pid := isServerDaemonManagingBroker(globalDir); managed {
-		return fmt.Errorf("the runtime broker is managed by the combined server process (PID: %d).\n\nUse 'scion server start/stop/restart' to manage the server, or 'scion runtime-broker status' to check broker status.", pid)
+		return fmt.Errorf("the runtime broker is managed by the combined server process (PID: %d), use 'scion server start/stop/restart' to manage the server, or 'scion runtime-broker status' to check broker status", pid)
 	}
 
 	// Foreground mode - just run the server command directly
@@ -873,7 +873,7 @@ func runBrokerStart(cmd *cobra.Command, args []string) error {
 
 	// Verify it started
 	time.Sleep(500 * time.Millisecond)
-	running, pid, err = daemon.Status(globalDir)
+	running, pid, _ = daemon.Status(globalDir)
 	if !running {
 		return fmt.Errorf("daemon failed to start. Check log at: %s", daemon.GetLogPath(globalDir))
 	}
@@ -898,7 +898,7 @@ func runBrokerStop(cmd *cobra.Command, args []string) error {
 
 	// Check if the broker is managed by the combined server
 	if managed, pid := isServerDaemonManagingBroker(globalDir); managed {
-		return fmt.Errorf("the runtime broker is managed by the combined server process (PID: %d).\n\nUse 'scion server stop' to stop the server, or 'scion runtime-broker status' to check broker status.", pid)
+		return fmt.Errorf("the runtime broker is managed by the combined server process (PID: %d), use 'scion server stop' to stop the server, or 'scion runtime-broker status' to check broker status", pid)
 	}
 
 	// Check if daemon is running
@@ -907,7 +907,7 @@ func runBrokerStop(cmd *cobra.Command, args []string) error {
 		// Check if server is running on the port (might be foreground)
 		health, err := checkLocalBrokerServer(DefaultBrokerPort)
 		if err == nil {
-			return fmt.Errorf("broker server is running (status: %s) but not as a daemon.\n\nIf running in foreground, use Ctrl+C to stop it.", health.Status)
+			return fmt.Errorf("broker server is running (status: %s) but not as a daemon, if running in foreground use Ctrl+C to stop it", health.Status)
 		}
 		return fmt.Errorf("broker daemon is not running")
 	}
@@ -922,7 +922,7 @@ func runBrokerStop(cmd *cobra.Command, args []string) error {
 	time.Sleep(500 * time.Millisecond)
 	running, _, _ = daemon.Status(globalDir)
 	if running {
-		return fmt.Errorf("daemon may still be running. Check with 'scion runtime-broker status'")
+		return fmt.Errorf("daemon may still be running, check with 'scion runtime-broker status'")
 	}
 
 	fmt.Println("Broker daemon stopped.")
@@ -938,7 +938,7 @@ func runBrokerRestart(cmd *cobra.Command, args []string) error {
 
 	// Check if the broker is managed by the combined server
 	if managed, pid := isServerDaemonManagingBroker(globalDir); managed {
-		return fmt.Errorf("the runtime broker is managed by the combined server process (PID: %d).\n\nUse 'scion server restart' to restart the server, or 'scion runtime-broker status' to check broker status.", pid)
+		return fmt.Errorf("the runtime broker is managed by the combined server process (PID: %d), use 'scion server restart' to restart the server or 'scion runtime-broker status' to check broker status", pid)
 	}
 
 	// Check if daemon is running
@@ -947,9 +947,9 @@ func runBrokerRestart(cmd *cobra.Command, args []string) error {
 		// Check if server is running on the port (might be foreground)
 		health, err := checkLocalBrokerServer(DefaultBrokerPort)
 		if err == nil {
-			return fmt.Errorf("broker server is running (status: %s) but not as a daemon.\n\nIf running in foreground, use Ctrl+C to stop it and then 'scion runtime-broker start' to restart.", health.Status)
+			return fmt.Errorf("broker server is running (status: %s) but not as a daemon, if running in foreground use Ctrl+C to stop it and then 'scion runtime-broker start' to restart", health.Status)
 		}
-		return fmt.Errorf("broker daemon is not running.\n\nUse 'scion runtime-broker start' to start it.")
+		return fmt.Errorf("broker daemon is not running, use 'scion runtime-broker start' to start it")
 	}
 
 	// Stop the daemon
@@ -1156,10 +1156,11 @@ func runBrokerProvide(cmd *cobra.Command, args []string) error {
 	if brokerMakeDefault {
 		currentDefault := resp.Project.DefaultRuntimeBrokerID
 
-		if currentDefault == brokerID {
+		switch currentDefault {
+		case brokerID:
 			// Already the default, nothing to do
 			fmt.Printf("Broker '%s' is already the default for project '%s'\n", brokerName, resp.Project.Name)
-		} else if currentDefault == "" {
+		case "":
 			// No default set - the server should have auto-set it during provide,
 			// but set it explicitly to be sure
 			_, err := client.Projects().Update(ctx, resp.Project.ID, &hubclient.UpdateProjectRequest{
@@ -1169,7 +1170,7 @@ func runBrokerProvide(cmd *cobra.Command, args []string) error {
 				return fmt.Errorf("failed to set default broker: %w", err)
 			}
 			fmt.Printf("Broker '%s' set as default for project '%s'\n", brokerName, resp.Project.Name)
-		} else {
+		default:
 			// Different default already set - resolve its name and confirm
 			currentDefaultName := currentDefault[:8] // fallback to truncated ID
 			currentBroker, err := client.RuntimeBrokers().Get(ctx, currentDefault)
@@ -1638,7 +1639,7 @@ func runBrokerHubs(cmd *cobra.Command, args []string) error {
 	fmt.Println()
 
 	w := tabwriter.NewWriter(os.Stdout, 2, 4, 2, ' ', 0)
-	fmt.Fprintf(w, "  NAME\tHUB ENDPOINT\tAUTH\tSTATUS\tREGISTERED\n")
+	_, _ = fmt.Fprintf(w, "  NAME\tHUB ENDPOINT\tAUTH\tSTATUS\tREGISTERED\n")
 	for _, c := range allCreds {
 		regDate := ""
 		if !c.RegisteredAt.IsZero() {
@@ -1652,9 +1653,9 @@ func runBrokerHubs(cmd *cobra.Command, args []string) error {
 		if s, ok := liveStatusMap[c.Name]; ok {
 			status = s
 		}
-		fmt.Fprintf(w, "  %s\t%s\t%s\t%s\t%s\n", c.Name, c.HubEndpoint, authMode, status, regDate)
+		_, _ = fmt.Fprintf(w, "  %s\t%s\t%s\t%s\t%s\n", c.Name, c.HubEndpoint, authMode, status, regDate)
 	}
-	w.Flush()
+	_ = w.Flush()
 
 	fmt.Printf("\nCredentials directory: %s\n", multiStore.Dir())
 
@@ -1959,7 +1960,7 @@ func getHubClientForConnection(name string) (hubclient.Client, error) {
 	multiStore := brokercredentials.NewMultiStore("")
 	creds, err := multiStore.Load(name)
 	if err != nil {
-		return nil, fmt.Errorf("hub connection '%s' not found.\n\nUse 'scion runtime-broker hubs' to list available connections.", name)
+		return nil, fmt.Errorf("hub connection '%s' not found\n\nUse 'scion runtime-broker hubs' to list available connections", name)
 	}
 
 	if creds.HubEndpoint == "" {
@@ -2023,7 +2024,7 @@ func queryBrokerHubConnections(port int) *BrokerHubConnectionsResponse {
 	if err != nil {
 		return nil
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		return nil

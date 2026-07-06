@@ -603,7 +603,7 @@ func (r *KubernetesRuntime) createSecretProviderClass(ctx context.Context, names
 	if len(secretObjects) > 0 {
 		soJSON, _ := json.Marshal(secretObjects)
 		var soSlice []interface{}
-		json.Unmarshal(soJSON, &soSlice)
+		_ = json.Unmarshal(soJSON, &soSlice)
 		spec["secretObjects"] = soSlice
 	}
 
@@ -1766,7 +1766,7 @@ func (r *KubernetesRuntime) syncFromPod(ctx context.Context, namespace, podName,
 	})
 
 	// Close stdin to tell local tar that stream is finished
-	stdin.Close()
+	_ = stdin.Close()
 	waitErr := tarCmd.Wait()
 
 	if err != nil {
@@ -1786,7 +1786,7 @@ func (r *KubernetesRuntime) Stop(ctx context.Context, id string) error {
 }
 
 func (r *KubernetesRuntime) Delete(ctx context.Context, id string) error {
-	namespace := r.DefaultNamespace
+	var namespace string
 
 	// Support namespace/pod format
 	if strings.Contains(id, "/") {
@@ -1938,7 +1938,7 @@ func (r *KubernetesRuntime) List(ctx context.Context, labelFilter map[string]str
 }
 
 func (r *KubernetesRuntime) GetLogs(ctx context.Context, id string) (string, error) {
-	namespace := r.DefaultNamespace
+	var namespace string
 	podName := id
 
 	if strings.Contains(id, "/") {
@@ -1954,7 +1954,7 @@ func (r *KubernetesRuntime) GetLogs(ctx context.Context, id string) (string, err
 	if err != nil {
 		return "", err
 	}
-	defer podLogs.Close()
+	defer func() { _ = podLogs.Close() }()
 
 	data, err := io.ReadAll(podLogs)
 	if err != nil {
@@ -1965,13 +1965,12 @@ func (r *KubernetesRuntime) GetLogs(ctx context.Context, id string) (string, err
 }
 
 func (r *KubernetesRuntime) Attach(ctx context.Context, id string) error {
+	var namespace string
 	podName := id
-	namespace := r.DefaultNamespace
 
 	if strings.Contains(id, "/") {
 		parts := strings.SplitN(id, "/", 2)
 		namespace = parts[0]
-		podName = parts[1]
 	} else {
 		namespace = r.resolveNamespace(ctx, podName)
 	}
@@ -1991,7 +1990,7 @@ func (r *KubernetesRuntime) Attach(ctx context.Context, id string) error {
 	}
 
 	if agent == nil {
-		return fmt.Errorf("agent '%s' pod not found. It may have been deleted.", id)
+		return fmt.Errorf("agent '%s' pod not found, it may have been deleted", id)
 	}
 
 	// Use the actual pod name (ContainerID) which may include a project prefix
@@ -2000,7 +1999,7 @@ func (r *KubernetesRuntime) Attach(ctx context.Context, id string) error {
 
 	// For Kubernetes, we want to ensure it is in Running phase
 	if !strings.EqualFold(agent.ContainerStatus, string(corev1.PodRunning)) {
-		return fmt.Errorf("agent '%s' is not running (status: %s). Use 'scion start %s' to resume it.", id, agent.ContainerStatus, id)
+		return fmt.Errorf("agent '%s' is not running (status: %s), use 'scion start %s' to resume it", id, agent.ContainerStatus, id)
 	}
 
 	fmt.Printf("Attaching to pod '%s' (use Ctrl-b d to detach)...\n", podName)
@@ -2052,7 +2051,7 @@ func (r *KubernetesRuntime) Attach(ctx context.Context, id string) error {
 		if err != nil {
 			return fmt.Errorf("failed to set raw mode: %w", err)
 		}
-		defer term.Restore(fd, oldState)
+		defer func() { _ = term.Restore(fd, oldState) }()
 	}
 
 	// Create a context that can be canceled by our detach sequence
@@ -2194,15 +2193,16 @@ func (r *KubernetesRuntime) Sync(ctx context.Context, id string, direction SyncD
 			if v.Source == "" {
 				continue
 			}
-			if direction == SyncTo {
+			switch direction {
+			case SyncTo:
 				if err := gcp.SyncToGCS(ctx, v.Source, v.Bucket, v.Prefix); err != nil {
 					return fmt.Errorf("failed to sync to GCS: %w", err)
 				}
-			} else if direction == SyncFrom {
+			case SyncFrom:
 				if err := gcp.SyncFromGCS(ctx, v.Bucket, v.Prefix, v.Source); err != nil {
 					return fmt.Errorf("failed to sync from GCS: %w", err)
 				}
-			} else {
+			default:
 				return fmt.Errorf("sync direction must be specified for GCS volumes")
 			}
 		}
@@ -2268,7 +2268,7 @@ func (r *KubernetesRuntime) Sync(ctx context.Context, id string, direction SyncD
 }
 
 func (r *KubernetesRuntime) Exec(ctx context.Context, id string, cmd []string) (string, error) {
-	namespace := r.DefaultNamespace
+	var namespace string
 	podName := id
 
 	if strings.Contains(id, "/") {
@@ -2370,7 +2370,7 @@ func (r *KubernetesRuntime) execInPod(ctx context.Context, namespace, podName st
 // GetWorkspacePath returns the local workspace path for a Kubernetes pod.
 // For K8s, this returns the workspace path stored in annotations when the pod was created.
 func (r *KubernetesRuntime) GetWorkspacePath(ctx context.Context, id string) (string, error) {
-	namespace := r.DefaultNamespace
+	var namespace string
 
 	// Parse namespace from id if present (format: namespace/podname)
 	if strings.Contains(id, "/") {

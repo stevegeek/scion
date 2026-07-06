@@ -95,7 +95,7 @@ func (r *Receiver) Start(ctx context.Context) error {
 
 	go func() {
 		if err := r.grpcServer.Serve(grpcLis); err != nil && err != grpc.ErrServerStopped {
-			// Log error but don't fail - receiver may be stopping
+			_ = err // receiver may be stopping; ignore serve errors
 		}
 	}()
 
@@ -117,9 +117,9 @@ func (r *Receiver) Start(ctx context.Context) error {
 	}
 
 	go func() {
-		if err := r.httpServer.Serve(httpLis); err != nil && err != http.ErrServerClosed {
-			// Log error but don't fail
-		}
+		// Log error but don't fail - error is intentionally ignored
+		// because this is a best-effort telemetry receiver.
+		_ = r.httpServer.Serve(httpLis)
 	}()
 
 	r.running = true
@@ -197,7 +197,7 @@ func (r *Receiver) handleHTTPTraces(w http.ResponseWriter, req *http.Request) {
 	respBytes, _ := proto.Marshal(resp)
 	w.Header().Set("Content-Type", "application/x-protobuf")
 	w.WriteHeader(http.StatusOK)
-	w.Write(respBytes)
+	_, _ = w.Write(respBytes)
 }
 
 // traceServiceServer implements the OTLP gRPC trace service.
@@ -246,7 +246,7 @@ func (r *Receiver) handleHTTPMetrics(w http.ResponseWriter, req *http.Request) {
 	respBytes, _ := proto.Marshal(resp)
 	w.Header().Set("Content-Type", "application/x-protobuf")
 	w.WriteHeader(http.StatusOK)
-	w.Write(respBytes)
+	_, _ = w.Write(respBytes)
 }
 
 // metricsServiceServer implements the OTLP gRPC metrics service.
@@ -295,7 +295,7 @@ func (r *Receiver) handleHTTPLogs(w http.ResponseWriter, req *http.Request) {
 	respBytes, _ := proto.Marshal(resp)
 	w.Header().Set("Content-Type", "application/x-protobuf")
 	w.WriteHeader(http.StatusOK)
-	w.Write(respBytes)
+	_, _ = w.Write(respBytes)
 }
 
 // logsServiceServer implements the OTLP gRPC logs service.

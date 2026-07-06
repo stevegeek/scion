@@ -157,7 +157,7 @@ func runServerStartOrDaemon(cmd *cobra.Command, args []string) error {
 
 	// Verify it started
 	time.Sleep(500 * time.Millisecond)
-	running, pid, err = daemon.StatusComponent(serverDaemonComponent, globalDir)
+	running, pid, _ = daemon.StatusComponent(serverDaemonComponent, globalDir)
 	if !running {
 		return fmt.Errorf("daemon failed to start. Check log at: %s", daemon.GetLogPathComponent(serverDaemonComponent, globalDir))
 	}
@@ -303,7 +303,7 @@ func runServerRestart(cmd *cobra.Command, args []string) error {
 
 	running, pid, _ := daemon.StatusComponent(serverDaemonComponent, globalDir)
 	if !running {
-		return fmt.Errorf("server daemon is not running.\n\nUse 'scion server start' to start it.")
+		return fmt.Errorf("server daemon is not running\n\nUse 'scion server start' to start it")
 	}
 
 	// Stop the daemon

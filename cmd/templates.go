@@ -161,7 +161,7 @@ func runTemplateList(cmd *cobra.Command, args []string) error {
 		printTemplateListLocalMode(w, localGlobal, localProject)
 	}
 
-	w.Flush()
+	_ = w.Flush()
 	return nil
 }
 
@@ -170,26 +170,26 @@ func printTemplateListLocalMode(w *tabwriter.Writer, global, project []*config.T
 	hasProject := len(project) > 0
 
 	if !hasGlobal && !hasProject {
-		fmt.Fprintln(w, "No templates found.")
+		_, _ = fmt.Fprintln(w, "No templates found.")
 		return
 	}
 
 	if hasGlobal {
-		fmt.Fprintln(w, "Global Templates:")
-		fmt.Fprintln(w, "  NAME\tPATH")
+		_, _ = fmt.Fprintln(w, "Global Templates:")
+		_, _ = fmt.Fprintln(w, "  NAME\tPATH")
 		for _, t := range global {
-			fmt.Fprintf(w, "  %s\t%s\n", t.Name, t.Path)
+			_, _ = fmt.Fprintf(w, "  %s\t%s\n", t.Name, t.Path)
 		}
 	}
 
 	if hasProject {
 		if hasGlobal {
-			fmt.Fprintln(w)
+			_, _ = fmt.Fprintln(w)
 		}
-		fmt.Fprintln(w, "Project Templates:")
-		fmt.Fprintln(w, "  NAME\tPATH")
+		_, _ = fmt.Fprintln(w, "Project Templates:")
+		_, _ = fmt.Fprintln(w, "  NAME\tPATH")
 		for _, t := range project {
-			fmt.Fprintf(w, "  %s\t%s\n", t.Name, t.Path)
+			_, _ = fmt.Fprintf(w, "  %s\t%s\n", t.Name, t.Path)
 		}
 	}
 }
@@ -204,28 +204,28 @@ func printTemplateListHubMode(w *tabwriter.Writer, localGlobal, localProject []*
 	hasHub := hasHubGlobal || hasHubProject
 
 	if !hasLocal && !hasHub {
-		fmt.Fprintln(w, "No templates found.")
+		_, _ = fmt.Fprintln(w, "No templates found.")
 		return
 	}
 
 	// Local section
 	if hasLocal {
-		fmt.Fprintln(w, "Local Templates:")
+		_, _ = fmt.Fprintln(w, "Local Templates:")
 		if hasLocalGlobal {
-			fmt.Fprintln(w, "  Global:")
-			fmt.Fprintln(w, "    NAME\tPATH")
+			_, _ = fmt.Fprintln(w, "  Global:")
+			_, _ = fmt.Fprintln(w, "    NAME\tPATH")
 			for _, t := range localGlobal {
-				fmt.Fprintf(w, "    %s\t%s\n", t.Name, t.Path)
+				_, _ = fmt.Fprintf(w, "    %s\t%s\n", t.Name, t.Path)
 			}
 		}
 		if hasLocalProject {
 			if hasLocalGlobal {
-				fmt.Fprintln(w)
+				_, _ = fmt.Fprintln(w)
 			}
-			fmt.Fprintln(w, "  Project:")
-			fmt.Fprintln(w, "    NAME\tPATH")
+			_, _ = fmt.Fprintln(w, "  Project:")
+			_, _ = fmt.Fprintln(w, "    NAME\tPATH")
 			for _, t := range localProject {
-				fmt.Fprintf(w, "    %s\t%s\n", t.Name, t.Path)
+				_, _ = fmt.Fprintf(w, "    %s\t%s\n", t.Name, t.Path)
 			}
 		}
 	}
@@ -233,24 +233,24 @@ func printTemplateListHubMode(w *tabwriter.Writer, localGlobal, localProject []*
 	// Hub section
 	if hasHub {
 		if hasLocal {
-			fmt.Fprintln(w)
+			_, _ = fmt.Fprintln(w)
 		}
-		fmt.Fprintln(w, "Hub Templates:")
+		_, _ = fmt.Fprintln(w, "Hub Templates:")
 		if hasHubGlobal {
-			fmt.Fprintln(w, "  Global:")
-			fmt.Fprintln(w, "    NAME\tID\tHASH")
+			_, _ = fmt.Fprintln(w, "  Global:")
+			_, _ = fmt.Fprintln(w, "    NAME\tID\tHASH")
 			for _, t := range hubGlobal {
-				fmt.Fprintf(w, "    %s\t%s\t%s\n", t.Name, t.ID, truncateHash(t.ContentHash))
+				_, _ = fmt.Fprintf(w, "    %s\t%s\t%s\n", t.Name, t.ID, truncateHash(t.ContentHash))
 			}
 		}
 		if hasHubProject {
 			if hasHubGlobal {
-				fmt.Fprintln(w)
+				_, _ = fmt.Fprintln(w)
 			}
-			fmt.Fprintln(w, "  Project:")
-			fmt.Fprintln(w, "    NAME\tID\tHASH")
+			_, _ = fmt.Fprintln(w, "  Project:")
+			_, _ = fmt.Fprintln(w, "    NAME\tID\tHASH")
 			for _, t := range hubProject {
-				fmt.Fprintf(w, "    %s\t%s\t%s\n", t.Name, t.ID, truncateHash(t.ContentHash))
+				_, _ = fmt.Fprintf(w, "    %s\t%s\t%s\n", t.Name, t.ID, truncateHash(t.ContentHash))
 			}
 		}
 	}
@@ -472,7 +472,7 @@ func deleteTemplateMatch(ctx context.Context, match *TemplateMatch, hubCtx *HubC
 	} else {
 		// Delete hub template
 		if hubCtx == nil {
-			return fmt.Errorf("Hub context not available for deleting Hub template")
+			return fmt.Errorf("hub context not available for deleting hub template")
 		}
 		deleteCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
 		defer cancel()
@@ -590,7 +590,7 @@ func cloneLocalTemplate(srcPath, destName string, destGlobal bool) error {
 // cloneFromHubTemplate pulls a Hub template and clones it locally.
 func cloneFromHubTemplate(hubCtx *HubContext, match *TemplateMatch, destName string, destGlobal bool) error {
 	if hubCtx == nil {
-		return fmt.Errorf("Hub context not available for cloning Hub template")
+		return fmt.Errorf("hub context not available for cloning hub template")
 	}
 
 	// Determine destination path
@@ -716,7 +716,7 @@ func runTemplateSync(cmd *cobra.Command, args []string) error {
 		return err
 	}
 	if hubCtx == nil {
-		return fmt.Errorf("Hub integration is not enabled. Use 'scion hub enable' first")
+		return fmt.Errorf("hub integration is not enabled, use 'scion hub enable' first")
 	}
 
 	PrintUsingHub(hubCtx.Endpoint)
@@ -846,7 +846,7 @@ func runTemplatePull(cmd *cobra.Command, args []string) error {
 		return err
 	}
 	if hubCtx == nil {
-		return fmt.Errorf("Hub integration is not enabled. Use 'scion hub enable' first")
+		return fmt.Errorf("hub integration is not enabled, use 'scion hub enable' first")
 	}
 
 	PrintUsingHub(hubCtx.Endpoint)
@@ -1114,7 +1114,7 @@ func syncTemplateToHub(hubCtx *HubContext, name, localPath, scope, harnessType s
 		}
 
 		err = hubCtx.Client.Templates().UploadFile(ctx, urlInfo.URL, urlInfo.Method, urlInfo.Headers, f)
-		f.Close()
+		_ = f.Close()
 		if err != nil {
 			return fmt.Errorf("failed to upload %s: %w", fileInfo.Path, err)
 		}
@@ -1162,7 +1162,7 @@ func syncTemplateToHub(hubCtx *HubContext, name, localPath, scope, harnessType s
 				return fmt.Errorf("failed to open %s: %w", fileInfo.Path, openErr)
 			}
 			uploadErr := hubCtx.Client.Templates().UploadFile(ctx, urlInfo.URL, urlInfo.Method, urlInfo.Headers, f)
-			f.Close()
+			_ = f.Close()
 			if uploadErr != nil {
 				return fmt.Errorf("failed to upload %s: %w", fileInfo.Path, uploadErr)
 			}
@@ -1229,7 +1229,7 @@ func runTemplateStatus(cmd *cobra.Command, args []string) error {
 		return err
 	}
 	if hubCtx == nil {
-		return fmt.Errorf("Hub integration is not enabled. Use 'scion hub enable' first")
+		return fmt.Errorf("hub integration is not enabled, use 'scion hub enable' first")
 	}
 
 	PrintUsingHub(hubCtx.Endpoint)
@@ -1362,7 +1362,7 @@ func runTemplateStatus(cmd *cobra.Command, args []string) error {
 	}
 
 	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
-	fmt.Fprintln(w, "TEMPLATE\tLOCAL\tHUB\tSTATUS")
+	_, _ = fmt.Fprintln(w, "TEMPLATE\tLOCAL\tHUB\tSTATUS")
 	for _, e := range entries {
 		localStr := "no"
 		if e.Local {
@@ -1373,14 +1373,15 @@ func runTemplateStatus(cmd *cobra.Command, args []string) error {
 			hubStr = "yes"
 		}
 		status := e.Status
-		if e.Status == "synced" {
+		switch e.Status {
+		case "synced":
 			status = "synced (hash match)"
-		} else if e.Status == "out of date" {
+		case "out of date":
 			status = "out of date (local differs)"
 		}
-		fmt.Fprintf(w, "%s\t%s\t%s\t%s\n", e.Name, localStr, hubStr, status)
+		_, _ = fmt.Fprintf(w, "%s\t%s\t%s\t%s\n", e.Name, localStr, hubStr, status)
 	}
-	w.Flush()
+	_ = w.Flush()
 
 	return nil
 }

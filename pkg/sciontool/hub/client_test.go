@@ -219,7 +219,7 @@ func TestClient_UpdateStatus_Errors(t *testing.T) {
 	t.Run("server error", func(t *testing.T) {
 		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			w.WriteHeader(http.StatusInternalServerError)
-			w.Write([]byte("internal error"))
+			_, _ = w.Write([]byte("internal error"))
 		}))
 		defer server.Close()
 
@@ -234,7 +234,7 @@ func TestClient_ReportState(t *testing.T) {
 	var lastPayload map[string]interface{}
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		json.NewDecoder(r.Body).Decode(&lastPayload)
+		_ = json.NewDecoder(r.Body).Decode(&lastPayload)
 		w.WriteHeader(http.StatusOK)
 	}))
 	defer server.Close()
@@ -264,7 +264,7 @@ func TestClient_Heartbeat(t *testing.T) {
 	var lastStatus StatusUpdate
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		json.NewDecoder(r.Body).Decode(&lastStatus)
+		_ = json.NewDecoder(r.Body).Decode(&lastStatus)
 		w.WriteHeader(http.StatusOK)
 	}))
 	defer server.Close()
@@ -309,7 +309,7 @@ func TestClient_RetryLogic(t *testing.T) {
 			attempts++
 			if attempts < 3 {
 				w.WriteHeader(http.StatusInternalServerError)
-				w.Write([]byte("server error"))
+				_, _ = w.Write([]byte("server error"))
 				return
 			}
 			w.WriteHeader(http.StatusOK)
@@ -334,7 +334,7 @@ func TestClient_RetryLogic(t *testing.T) {
 		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			attempts++
 			w.WriteHeader(http.StatusBadRequest)
-			w.Write([]byte("bad request"))
+			_, _ = w.Write([]byte("bad request"))
 		}))
 		defer server.Close()
 
@@ -355,7 +355,7 @@ func TestClient_RetryLogic(t *testing.T) {
 		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			attempts++
 			w.WriteHeader(http.StatusInternalServerError)
-			w.Write([]byte("server error"))
+			_, _ = w.Write([]byte("server error"))
 		}))
 		defer server.Close()
 
@@ -578,7 +578,7 @@ func TestClient_RefreshToken(t *testing.T) {
 
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusOK)
-			w.Write([]byte(`{"token":"new-token","expires_at":"2030-01-01T00:00:00Z"}`))
+			_, _ = w.Write([]byte(`{"token":"new-token","expires_at":"2030-01-01T00:00:00Z"}`))
 		}))
 		defer server.Close()
 
@@ -600,7 +600,7 @@ func TestClient_RefreshToken(t *testing.T) {
 	t.Run("server rejects refresh", func(t *testing.T) {
 		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			w.WriteHeader(http.StatusUnauthorized)
-			w.Write([]byte("token expired"))
+			_, _ = w.Write([]byte("token expired"))
 		}))
 		defer server.Close()
 
@@ -648,7 +648,7 @@ func TestClient_StartTokenRefresh(t *testing.T) {
 			futureExpiry := time.Now().Add(10 * time.Hour).UTC().Format(time.RFC3339)
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusOK)
-			w.Write([]byte(`{"token":"refreshed-token","expires_at":"` + futureExpiry + `"}`))
+			_, _ = w.Write([]byte(`{"token":"refreshed-token","expires_at":"` + futureExpiry + `"}`))
 		}))
 		defer server.Close()
 
@@ -673,7 +673,7 @@ func TestClient_StartTokenRefresh(t *testing.T) {
 	t.Run("stops when context is cancelled", func(t *testing.T) {
 		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			w.WriteHeader(http.StatusOK)
-			w.Write([]byte(`{"token":"new","expires_at":"2030-01-01T00:00:00Z"}`))
+			_, _ = w.Write([]byte(`{"token":"new","expires_at":"2030-01-01T00:00:00Z"}`))
 		}))
 		defer server.Close()
 
@@ -703,13 +703,13 @@ func TestClient_StartTokenRefresh(t *testing.T) {
 			// First attempt fails transiently (503); the second succeeds.
 			if atomic.AddInt32(&calls, 1) == 1 {
 				w.WriteHeader(http.StatusServiceUnavailable)
-				w.Write([]byte("temporarily down"))
+				_, _ = w.Write([]byte("temporarily down"))
 				return
 			}
 			futureExpiry := time.Now().Add(10 * time.Hour).UTC().Format(time.RFC3339)
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusOK)
-			w.Write([]byte(`{"token":"recovered-token","expires_at":"` + futureExpiry + `"}`))
+			_, _ = w.Write([]byte(`{"token":"recovered-token","expires_at":"` + futureExpiry + `"}`))
 		}))
 		defer server.Close()
 
@@ -759,7 +759,7 @@ func TestClient_StartTokenRefresh(t *testing.T) {
 
 		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			w.WriteHeader(http.StatusUnauthorized)
-			w.Write([]byte("invalid agent token: failed to verify token"))
+			_, _ = w.Write([]byte("invalid agent token: failed to verify token"))
 		}))
 		defer server.Close()
 
@@ -965,7 +965,7 @@ func TestClient_RefreshToken_ConcurrentAccess(t *testing.T) {
 		if r.URL.Path == "/api/v1/agents/agent-123/token/refresh" {
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusOK)
-			w.Write([]byte(`{"token":"concurrent-new-token","expires_at":"2030-01-01T00:00:00Z"}`))
+			_, _ = w.Write([]byte(`{"token":"concurrent-new-token","expires_at":"2030-01-01T00:00:00Z"}`))
 			return
 		}
 		w.WriteHeader(http.StatusOK)
@@ -983,13 +983,13 @@ func TestClient_RefreshToken_ConcurrentAccess(t *testing.T) {
 	go func() {
 		defer close(done)
 		for ctx.Err() == nil {
-			client.RefreshToken(context.Background())
+			_, _, _ = client.RefreshToken(context.Background())
 		}
 	}()
 
 	// Concurrent heartbeats
 	for ctx.Err() == nil {
-		client.Heartbeat(context.Background())
+		_ = client.Heartbeat(context.Background())
 	}
 
 	<-done
@@ -1006,7 +1006,7 @@ func TestClient_RefreshGitHubToken(t *testing.T) {
 
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusOK)
-			w.Write([]byte(`{"token":"ghs_fresh_github_token","expires_at":"2030-01-01T01:00:00Z"}`))
+			_, _ = w.Write([]byte(`{"token":"ghs_fresh_github_token","expires_at":"2030-01-01T01:00:00Z"}`))
 		}))
 		defer server.Close()
 
@@ -1021,7 +1021,7 @@ func TestClient_RefreshGitHubToken(t *testing.T) {
 	t.Run("server rejects request", func(t *testing.T) {
 		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			w.WriteHeader(http.StatusForbidden)
-			w.Write([]byte(`{"error":"no github app installation"}`))
+			_, _ = w.Write([]byte(`{"error":"no github app installation"}`))
 		}))
 		defer server.Close()
 
@@ -1044,7 +1044,7 @@ func TestClient_RefreshGitHubToken(t *testing.T) {
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusOK)
 			// This is the format returned by mintGitHubAppToken: "2006-01-02T15:04:05Z"
-			w.Write([]byte(`{"token":"ghs_token","expires_at":"2030-06-15T14:30:00Z"}`))
+			_, _ = w.Write([]byte(`{"token":"ghs_token","expires_at":"2030-06-15T14:30:00Z"}`))
 		}))
 		defer server.Close()
 
@@ -1112,7 +1112,7 @@ func TestClient_StartGitHubTokenRefresh(t *testing.T) {
 			futureExpiry := time.Now().Add(1 * time.Hour).UTC().Format(time.RFC3339)
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusOK)
-			w.Write([]byte(`{"token":"ghs_refreshed","expires_at":"` + futureExpiry + `"}`))
+			_, _ = w.Write([]byte(`{"token":"ghs_refreshed","expires_at":"` + futureExpiry + `"}`))
 		}))
 		defer server.Close()
 
@@ -1142,7 +1142,7 @@ func TestClient_StartGitHubTokenRefresh(t *testing.T) {
 	t.Run("stops when context is cancelled", func(t *testing.T) {
 		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			w.WriteHeader(http.StatusOK)
-			w.Write([]byte(`{"token":"ghs_new","expires_at":"2030-01-01T00:00:00Z"}`))
+			_, _ = w.Write([]byte(`{"token":"ghs_new","expires_at":"2030-01-01T00:00:00Z"}`))
 		}))
 		defer server.Close()
 
@@ -1167,7 +1167,7 @@ func TestClient_StartGitHubTokenRefresh(t *testing.T) {
 	t.Run("calls error callback on failure", func(t *testing.T) {
 		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			w.WriteHeader(http.StatusInternalServerError)
-			w.Write([]byte("server error"))
+			_, _ = w.Write([]byte("server error"))
 		}))
 		defer server.Close()
 
@@ -1246,7 +1246,7 @@ func TestStartGitHubTokenRefresh_WritesExpiryFile(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
-		w.Write([]byte(`{"token":"ghs_refreshed","expires_at":"` + futureExpiry.Format(time.RFC3339) + `"}`))
+		_, _ = w.Write([]byte(`{"token":"ghs_refreshed","expires_at":"` + futureExpiry.Format(time.RFC3339) + `"}`))
 	}))
 	defer server.Close()
 
@@ -1285,7 +1285,7 @@ func TestStartGitHubTokenRefresh_CallsOnRefreshedAfterEnvUpdate(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
-		json.NewEncoder(w).Encode(map[string]string{
+		_ = json.NewEncoder(w).Encode(map[string]string{
 			"token":      "ghs_fresh_token",
 			"expires_at": futureExpiry.Format(time.RFC3339),
 		})

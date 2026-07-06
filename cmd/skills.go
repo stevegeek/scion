@@ -46,7 +46,7 @@ var skillsListCmd = &cobra.Command{
 func runSkillsList(cmd *cobra.Command, args []string) error {
 	hubCtx, err := CheckHubAvailability(projectPath)
 	if err != nil {
-		return fmt.Errorf("Hub connection required: %w", err)
+		return fmt.Errorf("hub connection required: %w", err)
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
@@ -80,7 +80,7 @@ func runSkillsList(cmd *cobra.Command, args []string) error {
 	}
 
 	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
-	fmt.Fprintln(w, "NAME\tSCOPE\tSTATUS\tTAGS\tDESCRIPTION")
+	_, _ = fmt.Fprintln(w, "NAME\tSCOPE\tSTATUS\tTAGS\tDESCRIPTION")
 	for _, s := range resp.Skills {
 		desc := s.Description
 		if len(desc) > 50 {
@@ -90,7 +90,7 @@ func runSkillsList(cmd *cobra.Command, args []string) error {
 		if len(tags) > 20 {
 			tags = tags[:17] + "..."
 		}
-		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\n", s.Name, s.Scope, s.Status, tags, desc)
+		_, _ = fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\n", s.Name, s.Scope, s.Status, tags, desc)
 	}
 	return w.Flush()
 }
@@ -105,7 +105,7 @@ var skillsShowCmd = &cobra.Command{
 func runSkillsShow(cmd *cobra.Command, args []string) error {
 	hubCtx, err := CheckHubAvailability(projectPath)
 	if err != nil {
-		return fmt.Errorf("Hub connection required: %w", err)
+		return fmt.Errorf("hub connection required: %w", err)
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
@@ -276,7 +276,7 @@ func runSkillsPublish(cmd *cobra.Command, args []string) error {
 
 	hubCtx, err := CheckHubAvailability(projectPath)
 	if err != nil {
-		return fmt.Errorf("Hub connection required: %w", err)
+		return fmt.Errorf("hub connection required: %w", err)
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
@@ -341,7 +341,7 @@ func runSkillsPublish(cmd *cobra.Command, args []string) error {
 			return fmt.Errorf("failed to open %s: %w", localPath, err)
 		}
 		err = skillSvc.UploadFile(ctx, uploadInfo.URL, uploadInfo.Method, uploadInfo.Headers, file)
-		file.Close()
+		_ = file.Close()
 		if err != nil {
 			return fmt.Errorf("failed to upload %s: %w", uploadInfo.Path, err)
 		}
@@ -402,7 +402,7 @@ func hashFile(path string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 	h := sha256.New()
 	if _, err := io.Copy(h, f); err != nil {
 		return "", err
@@ -421,7 +421,7 @@ var skillsDeleteCmd = &cobra.Command{
 func runSkillsDelete(cmd *cobra.Command, args []string) error {
 	hubCtx, err := CheckHubAvailability(projectPath)
 	if err != nil {
-		return fmt.Errorf("Hub connection required: %w", err)
+		return fmt.Errorf("hub connection required: %w", err)
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
@@ -464,7 +464,7 @@ var skillsDeprecateCmd = &cobra.Command{
 func runSkillsDeprecate(cmd *cobra.Command, args []string) error {
 	hubCtx, err := CheckHubAvailability(projectPath)
 	if err != nil {
-		return fmt.Errorf("Hub connection required: %w", err)
+		return fmt.Errorf("hub connection required: %w", err)
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
@@ -540,7 +540,7 @@ var skillsVersionsCmd = &cobra.Command{
 func runSkillsVersions(cmd *cobra.Command, args []string) error {
 	hubCtx, err := CheckHubAvailability(projectPath)
 	if err != nil {
-		return fmt.Errorf("Hub connection required: %w", err)
+		return fmt.Errorf("hub connection required: %w", err)
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
@@ -575,13 +575,13 @@ func runSkillsVersions(cmd *cobra.Command, args []string) error {
 	}
 
 	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
-	fmt.Fprintln(w, "VERSION\tSTATUS\tCREATED\tCONTENT HASH")
+	_, _ = fmt.Fprintln(w, "VERSION\tSTATUS\tCREATED\tCONTENT HASH")
 	for _, v := range versions.Items {
 		hash := v.ContentHash
 		if len(hash) > 20 {
 			hash = hash[:20] + "..."
 		}
-		fmt.Fprintf(w, "%s\t%s\t%s\t%s\n", v.Version, v.Status, v.Created.Format("2006-01-02"), hash)
+		_, _ = fmt.Fprintf(w, "%s\t%s\t%s\t%s\n", v.Version, v.Status, v.Created.Format("2006-01-02"), hash)
 	}
 	return w.Flush()
 }
@@ -596,7 +596,7 @@ var skillsResolveCmd = &cobra.Command{
 func runSkillsResolve(cmd *cobra.Command, args []string) error {
 	hubCtx, err := CheckHubAvailability(projectPath)
 	if err != nil {
-		return fmt.Errorf("Hub connection required: %w", err)
+		return fmt.Errorf("hub connection required: %w", err)
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)

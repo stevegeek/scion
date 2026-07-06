@@ -758,6 +758,7 @@ type HarnessConfigEntry struct {
 type HarnessProvisionerConfig struct {
 	Type               string   `json:"type,omitempty" yaml:"type,omitempty" koanf:"type"`
 	InterfaceVersion   int      `json:"interface_version,omitempty" yaml:"interface_version,omitempty" koanf:"interface_version"`
+	Lib                string   `json:"lib,omitempty" yaml:"lib,omitempty" koanf:"lib"`
 	Command            []string `json:"command,omitempty" yaml:"command,omitempty" koanf:"command"`
 	Timeout            string   `json:"timeout,omitempty" yaml:"timeout,omitempty" koanf:"timeout"`
 	LifecycleEvents    []string `json:"lifecycle_events,omitempty" yaml:"lifecycle_events,omitempty" koanf:"lifecycle_events"`
@@ -773,57 +774,16 @@ type HarnessCommandConfig struct {
 	SystemPromptFlag string   `json:"system_prompt_flag,omitempty" yaml:"system_prompt_flag,omitempty" koanf:"system_prompt_flag"`
 }
 
-// HarnessAuthMetadata contains declarative auth preflight metadata.
-type HarnessAuthMetadata struct {
-	DefaultType string                             `json:"default_type,omitempty" yaml:"default_type,omitempty" koanf:"default_type"`
-	Types       map[string]HarnessAuthTypeMetadata `json:"types,omitempty" yaml:"types,omitempty" koanf:"types"`
-	Autodetect  HarnessAuthAutodetect              `json:"autodetect,omitempty" yaml:"autodetect,omitempty" koanf:"autodetect"`
-}
+// HarnessAuthMetadata is defined in pkg/api to avoid import cycles.
+type HarnessAuthMetadata = api.HarnessAuthMetadata
 
-type HarnessAuthTypeMetadata struct {
-	RequiredEnv   []HarnessAuthEnvRequirement  `json:"required_env,omitempty" yaml:"required_env,omitempty" koanf:"required_env"`
-	RequiredFiles []HarnessAuthFileRequirement `json:"required_files,omitempty" yaml:"required_files,omitempty" koanf:"required_files"`
-}
+type HarnessAuthTypeMetadata = api.HarnessAuthTypeMetadata
 
-type HarnessAuthEnvRequirement struct {
-	AnyOf []string `json:"any_of,omitempty" yaml:"any_of,omitempty" koanf:"any_of"`
-}
+type HarnessAuthEnvRequirement = api.HarnessAuthEnvRequirement
 
-type HarnessAuthFileRequirement struct {
-	Name        string `json:"name,omitempty" yaml:"name,omitempty" koanf:"name"`
-	Type        string `json:"type,omitempty" yaml:"type,omitempty" koanf:"type"`
-	Description string `json:"description,omitempty" yaml:"description,omitempty" koanf:"description"`
-	// TargetSuffix is the in-container projection target suffix. Used
-	// together with the broker's home dir resolution, e.g. "/.claude/.credentials.json".
-	TargetSuffix string `json:"target_suffix,omitempty" yaml:"target_suffix,omitempty" koanf:"target_suffix"`
-	// Field maps this file requirement to the corresponding AuthConfig
-	// struct field name (e.g. "ClaudeAuthFile"). Used by
-	// OverlayFileSecretsFromConfig to set auth fields without hardcoded
-	// switch statements.
-	Field string `json:"field,omitempty" yaml:"field,omitempty" koanf:"field"`
-	// AlternativeEnvKeys lists env vars that satisfy this file requirement
-	// in lieu of the file itself (e.g. GOOGLE_APPLICATION_CREDENTIALS for
-	// gcloud-adc).
-	AlternativeEnvKeys []string `json:"alternative_env_keys,omitempty" yaml:"alternative_env_keys,omitempty" koanf:"alternative_env_keys"`
-	// SkippedWhenGCPServiceAccountAssigned drops this requirement when a
-	// GCP workload identity is attached, because the metadata server stands
-	// in for the credential file.
-	SkippedWhenGCPServiceAccountAssigned bool `json:"skipped_when_gcp_service_account_assigned,omitempty" yaml:"skipped_when_gcp_service_account_assigned,omitempty" koanf:"skipped_when_gcp_service_account_assigned"`
-	// Required marks the file as a broker-side required secret: the broker
-	// must locate it (via Hub secrets, CLI gather, or alternatives) before
-	// dispatching the agent. When false the file is documentary — the auth
-	// type uses it, but the broker is not responsible for sourcing it (the
-	// user mounts a locally-resolved file). This preserves legacy parity:
-	// vertex-ai's gcloud-adc was the only "must-supply" secret in the
-	// compiled tables; auth-file types described their files but did not
-	// enforce them at preflight.
-	Required bool `json:"required,omitempty" yaml:"required,omitempty" koanf:"required"`
-}
+type HarnessAuthFileRequirement = api.HarnessAuthFileRequirement
 
-type HarnessAuthAutodetect struct {
-	Env   map[string]string `json:"env,omitempty" yaml:"env,omitempty" koanf:"env"`
-	Files map[string]string `json:"files,omitempty" yaml:"files,omitempty" koanf:"files"`
-}
+type HarnessAuthAutodetect = api.HarnessAuthAutodetect
 
 // HarnessNoAuthConfig defines harness behavior when an agent starts without credentials.
 type HarnessNoAuthConfig struct {
@@ -890,11 +850,12 @@ type V1ProfileConfig struct {
 // so that settings are loaded from ~/.scion/project-configs/<slug>__<uuid>/.scion/.
 func resolveEffectiveProjectPath(projectPath string) string {
 	effectiveProjectPath := projectPath
-	if effectiveProjectPath == "" {
+	switch effectiveProjectPath {
+	case "":
 		if projectPath, ok := FindProjectRoot(); ok {
 			effectiveProjectPath = projectPath
 		}
-	} else if effectiveProjectPath == "global" || effectiveProjectPath == "home" {
+	case "global", "home":
 		effectiveProjectPath = ""
 	}
 	if effectiveProjectPath != "" {
@@ -2219,7 +2180,7 @@ func MigrateSettingsFile(dir string, dryRun bool) (*MigrationResult, error) {
 		return nil, fmt.Errorf("failed to read %s: %w", settingsPath, err)
 	}
 
-	version, isLegacy := DetectSettingsFormat(data)
+	version, _ := DetectSettingsFormat(data)
 	if version != "" {
 		result.Skipped = true
 		result.SkipReason = fmt.Sprintf("already versioned (schema_version: %s)", version)
@@ -2243,10 +2204,8 @@ func MigrateSettingsFile(dir string, dryRun bool) (*MigrationResult, error) {
 	}
 
 	// If file has no legacy indicators and is effectively empty, still migrate it
-	// (add schema_version to make it versioned)
-	if !isLegacy && version == "" {
-		// Minimal or empty file — still convert
-	}
+	// (add schema_version to make it versioned).
+	// Both legacy and minimal/empty files fall through to conversion below.
 
 	// 4. Convert via AdaptLegacySettings
 	vs, warnings := AdaptLegacySettings(&legacy)

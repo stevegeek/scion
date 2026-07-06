@@ -259,7 +259,7 @@ func promptHubRegistration(isGlobal bool) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	if _, err := client.Health(ctx); err != nil {
-		return fmt.Errorf("Hub is not responding: %w", err)
+		return fmt.Errorf("hub is not responding: %w", err)
 	}
 
 	// Get project info
@@ -307,7 +307,6 @@ func promptHubRegistration(isGlobal bool) error {
 		if err := config.UpdateSetting(resolvedPath, "hub.projectId", resp.Project.ID, isGlobal); err != nil {
 			fmt.Printf("Warning: failed to save hub project ID: %v\n", err)
 		}
-		projectID = resp.Project.ID
 	}
 
 	// Show any auto-provided brokers

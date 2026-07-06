@@ -573,7 +573,7 @@ func ProvisionAgent(ctx context.Context, agentName string, templateName string, 
 		worktreeStart := time.Now()
 		// Remove existing workspace dir if it exists to allow worktree add
 		_ = util.MakeWritableRecursive(agentWorkspace)
-		os.RemoveAll(agentWorkspace)
+		_ = os.RemoveAll(agentWorkspace)
 		// Prune worktrees to clean up any stale entries.
 		// Use repo-root-aware prune so it works when the process CWD is
 		// outside the repository (e.g. runtime broker).
@@ -1168,10 +1168,10 @@ func ProvisionAgent(ctx context.Context, agentName string, templateName string, 
 			return "", "", nil, fmt.Errorf("failed to open .gitconfig for credential helper: %w", err)
 		}
 		if _, err := f.WriteString(credentialSection); err != nil {
-			f.Close()
+			_ = f.Close()
 			return "", "", nil, fmt.Errorf("failed to write credential helper to .gitconfig: %w", err)
 		}
-		f.Close()
+		_ = f.Close()
 		util.Debugf("provision: configured git credential helper for shared workspace in %s", gitconfigPath)
 	}
 
@@ -1596,7 +1596,7 @@ func GetAgent(ctx context.Context, agentName string, templateName string, agentI
 				_ = os.Chmod(path, 0755)
 				return nil
 			})
-			os.RemoveAll(agentDir)
+			_ = os.RemoveAll(agentDir)
 			// Prune worktrees so git forgets any worktree that pointed into the
 			// now-deleted directory, allowing ProvisionAgent to recreate it cleanly.
 			if root, rootErr := util.RepoRootDir(filepath.Dir(agentWorkspace)); rootErr == nil {
@@ -1636,7 +1636,7 @@ func GetAgent(ctx context.Context, agentName string, templateName string, agentI
 	// Load settings for default template
 	vs, vsWarnings, err := config.LoadEffectiveSettings(projectDir)
 	if err != nil {
-		// Just log or ignore
+		util.Debugf("failed to load effective settings: %v", err)
 	}
 	config.PrintDeprecationWarnings(vsWarnings)
 	defaultTemplate := "default"

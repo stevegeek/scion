@@ -241,13 +241,13 @@ func runCloudBuild(cmd *cobra.Command, harnessConfigName string, hcDir *config.H
 	if err != nil {
 		return fmt.Errorf("failed to create temp cloudbuild config: %w", err)
 	}
-	defer os.Remove(tmpFile.Name())
+	defer func() { _ = os.Remove(tmpFile.Name()) }()
 
 	if _, err := tmpFile.Write(cbYAML); err != nil {
-		tmpFile.Close()
+		_ = tmpFile.Close()
 		return fmt.Errorf("failed to write cloudbuild config: %w", err)
 	}
-	tmpFile.Close()
+	_ = tmpFile.Close()
 
 	if buildDryRun {
 		fmt.Printf("gcloud builds submit --project %s --config %s %s\n", gcpProject, tmpFile.Name(), hcDir.Path)
@@ -265,7 +265,7 @@ func runCloudBuild(cmd *cobra.Command, harnessConfigName string, hcDir *config.H
 	gcloudCmd.Stdout = os.Stdout
 	gcloudCmd.Stderr = os.Stderr
 	if err := gcloudCmd.Run(); err != nil {
-		return fmt.Errorf("Cloud Build failed: %w", err)
+		return fmt.Errorf("cloud Build failed: %w", err)
 	}
 
 	updateBuildConfigAndSync(harnessConfigName, hcDir, outputImage)

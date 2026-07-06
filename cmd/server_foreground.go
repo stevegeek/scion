@@ -180,7 +180,7 @@ func runServerStart(cmd *cobra.Command, args []string) error {
 			return err
 		}
 		if closer, ok := s.(io.Closer); ok {
-			defer closer.Close()
+			defer func() { _ = closer.Close() }()
 		}
 	}
 
@@ -319,7 +319,7 @@ func runServerStart(cmd *cobra.Command, args []string) error {
 			go func() {
 				defer wg.Done()
 				<-ctx.Done()
-				hubSrv.CleanupResources(context.Background())
+				_ = hubSrv.CleanupResources(context.Background())
 			}()
 		}
 	}
@@ -812,7 +812,7 @@ func checkServerPorts(cfg *config.GlobalConfig) error {
 			if status.isScionServer {
 				return fmt.Errorf("a scion server is already running on port %d\nUse 'scion server status' to check or 'scion server stop' to stop it", cfg.Hub.Port)
 			}
-			return fmt.Errorf("Hub port %d is already in use by another process", cfg.Hub.Port)
+			return fmt.Errorf("hub port %d is already in use by another process", cfg.Hub.Port)
 		}
 	}
 	if cfg.RuntimeBroker.Enabled {
@@ -821,7 +821,7 @@ func checkServerPorts(cfg *config.GlobalConfig) error {
 			if status.isScionServer {
 				return fmt.Errorf("a scion server is already running on port %d\nUse 'scion server status' to check or 'scion server stop' to stop it", cfg.RuntimeBroker.Port)
 			}
-			return fmt.Errorf("Runtime Broker port %d is already in use by another process", cfg.RuntimeBroker.Port)
+			return fmt.Errorf("runtime broker port %d is already in use by another process", cfg.RuntimeBroker.Port)
 		}
 	}
 	if enableWeb {
@@ -834,7 +834,7 @@ func checkServerPorts(cfg *config.GlobalConfig) error {
 			if status.isScionServer {
 				return fmt.Errorf("a scion server is already running on port %d\nUse 'scion server status' to check or 'scion server stop' to stop it", webPort)
 			}
-			return fmt.Errorf("Web Frontend port %d is already in use by another process", webPort)
+			return fmt.Errorf("web frontend port %d is already in use by another process", webPort)
 		}
 	}
 	return nil
@@ -907,12 +907,12 @@ func initStore(ctx context.Context, cfg *config.GlobalConfig) (store.Store, *ent
 	// Migrate runs Ent's schema migration and seeds built-in maintenance
 	// operations (parity with the former raw-SQL store).
 	if err := migrateStore(ctx, cfg, s); err != nil {
-		s.Close()
+		_ = s.Close()
 		return nil, nil, fmt.Errorf("failed to run migrations: %w", err)
 	}
 
 	if err := s.Ping(ctx); err != nil {
-		s.Close()
+		_ = s.Close()
 		return nil, nil, fmt.Errorf("database ping failed: %w", err)
 	}
 
@@ -932,7 +932,7 @@ func migrateStore(ctx context.Context, cfg *config.GlobalConfig, s *entadapter.C
 	if err != nil {
 		return fmt.Errorf("acquiring migration lock connection: %w", err)
 	}
-	defer conn.Close()
+	defer func() { _ = conn.Close() }()
 
 	if _, err := conn.ExecContext(ctx, "SELECT pg_advisory_lock($1)", int64(store.LockSchemaMigration)); err != nil {
 		return fmt.Errorf("acquiring migration advisory lock: %w", err)
@@ -1010,8 +1010,8 @@ func initDevAuth(cfg *config.GlobalConfig, globalDir string) (string, error) {
 		return "", fmt.Errorf("failed to initialize dev auth: %w", err)
 	}
 
-	os.Setenv("SCION_DEV_TOKEN", devAuthToken)
-	os.Setenv("SCION_AUTH_TOKEN", devAuthToken)
+	_ = os.Setenv("SCION_DEV_TOKEN", devAuthToken)
+	_ = os.Setenv("SCION_AUTH_TOKEN", devAuthToken)
 
 	log.Printf("Developer token: %s", devAuthToken)
 	log.Printf("To authenticate CLI commands, run:")

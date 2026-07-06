@@ -56,7 +56,6 @@ type managedService struct {
 	// start(), the reset-failures goroutine, and the Manager.Shutdown path.
 	mu        sync.Mutex
 	cmd       *exec.Cmd
-	cancel    context.CancelFunc
 	done      chan struct{}
 	exited    bool
 	exitCode  int
@@ -440,13 +439,13 @@ func (svc *managedService) openLogs() error {
 
 func (svc *managedService) closeLogs() {
 	if svc.stdoutFile != nil {
-		svc.stdoutFile.Close()
+		_ = svc.stdoutFile.Close()
 	}
 	if svc.stderrFile != nil {
-		svc.stderrFile.Close()
+		_ = svc.stderrFile.Close()
 	}
 	if svc.lifecycleFile != nil {
-		svc.lifecycleFile.Close()
+		_ = svc.lifecycleFile.Close()
 	}
 }
 
@@ -456,7 +455,7 @@ func (svc *managedService) writeLifecycle(format string, args ...interface{}) {
 	}
 	timestamp := time.Now().Format("2006-01-02 15:04:05")
 	msg := fmt.Sprintf(format, args...)
-	fmt.Fprintf(svc.lifecycleFile, "[%s] %s\n", timestamp, msg)
+	_, _ = fmt.Fprintf(svc.lifecycleFile, "[%s] %s\n", timestamp, msg)
 }
 
 // mergeEnv merges service-specific env vars into the parent environment.

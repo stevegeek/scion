@@ -24,8 +24,6 @@ import (
 	"strings"
 	"sync"
 
-	"database/sql"
-
 	entsql "entgo.io/ent/dialect/sql"
 	"github.com/google/uuid"
 
@@ -355,7 +353,7 @@ func (s *Server) handleUpdateIntegrationConfig(w http.ResponseWriter, r *http.Re
 				InternalError(w)
 				return
 			}
-			defer haTx.Rollback()
+			defer func() { _ = haTx.Rollback() }()
 			pgProvider := config.NewPostgresConfigProvider(haTx.Client(), name)
 			pgProvider.SetUpdatedBy(userID)
 			provider = pgProvider
@@ -892,18 +890,6 @@ func integrationUpdateToResponse(row *ent.IntegrationUpdate) IntegrationUpdateRe
 	}
 }
 
-// entDB returns the underlying *sql.DB from the server's Ent client, or nil.
-func (s *Server) entDB() *sql.DB {
-	if s.entClient == nil {
-		return nil
-	}
-	drv, ok := s.entClient.Driver().(*entsql.Driver)
-	if !ok {
-		return nil
-	}
-	return drv.DB()
-}
-
 // handleUpdateIntegrationHA handles POST .../update for HA integrations.
 // It inserts an integration_updates row in "requested" state, fires a NOTIFY,
 // and returns 202 with the update_id for polling.
@@ -965,7 +951,7 @@ func (s *Server) handleUpdateIntegrationHA(w http.ResponseWriter, r *http.Reques
 		InternalError(w)
 		return
 	}
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }()
 
 	create := tx.IntegrationUpdate.
 		Create().

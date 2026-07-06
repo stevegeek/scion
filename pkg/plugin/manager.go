@@ -32,12 +32,12 @@ import (
 // Manager owns the lifecycle of all loaded plugins.
 // It handles discovery, loading, dispensing, and shutdown of plugin processes.
 type Manager struct {
-	clients         map[string]*goplugin.Client    // "type:name" -> client
-	dispensed       map[string]interface{}         // "type:name" -> dispensed interface (cached)
-	selfManaged     map[string]bool                // "type:name" -> true if self-managed
-	grpcAdapters    map[string]GRPCBrokerClient    // "type:name" -> gRPC adapter
-	configs         map[string]DiscoveredPlugin    // "type:name" -> original config (for reconnection)
-	pluginEntries   map[string]PluginEntry         // "type:name" -> original PluginEntry (for mode resolution)
+	clients         map[string]*goplugin.Client // "type:name" -> client
+	dispensed       map[string]interface{}      // "type:name" -> dispensed interface (cached)
+	selfManaged     map[string]bool             // "type:name" -> true if self-managed
+	grpcAdapters    map[string]GRPCBrokerClient // "type:name" -> gRPC adapter
+	configs         map[string]DiscoveredPlugin // "type:name" -> original config (for reconnection)
+	pluginEntries   map[string]PluginEntry      // "type:name" -> original PluginEntry (for mode resolution)
 	mu              sync.RWMutex
 	logger          *slog.Logger
 	brokerCallbacks *HostCallbacksForwarder // lazily-wired host callbacks for broker plugins
@@ -196,7 +196,7 @@ func (m *Manager) loadGRPCPlugin(pluginType, name string, entry PluginEntry) err
 	key := pluginType + ":" + name
 	m.mu.Lock()
 	if old, ok := m.grpcAdapters[key]; ok {
-		old.Close()
+		_ = old.Close()
 	}
 	m.grpcAdapters[key] = adapter
 	m.pluginEntries[key] = entry
@@ -692,10 +692,10 @@ func (m *Manager) UpdatePlugin(name string, repoPath string) error {
 	buildCmd := exec.Command("go", "build", "-o", tmpBinaryPath, "./cmd/scion-plugin-"+name)
 	buildCmd.Dir = sourceDir
 	if output, err := buildCmd.CombinedOutput(); err != nil {
-		os.Remove(tmpBinaryPath)
+		_ = os.Remove(tmpBinaryPath)
 		return fmt.Errorf("go build failed for plugin %q: %w\n%s", name, err, string(output))
 	}
-	defer os.Remove(tmpBinaryPath)
+	defer func() { _ = os.Remove(tmpBinaryPath) }()
 
 	m.mu.Lock()
 	if client, hasClient := m.clients[key]; hasClient {

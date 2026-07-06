@@ -30,10 +30,10 @@ func setupTestEnv(t *testing.T) (cleanup func()) {
 	t.Helper()
 	tmpDir := t.TempDir()
 	origHome := os.Getenv("HOME")
-	os.Setenv("HOME", tmpDir)
+	_ = os.Setenv("HOME", tmpDir)
 	log.SetLogPath(filepath.Join(tmpDir, "agent.log"))
 	return func() {
-		os.Setenv("HOME", origHome)
+		_ = os.Setenv("HOME", origHome)
 	}
 }
 
@@ -117,7 +117,7 @@ func TestManager_RestartOnFailure(t *testing.T) {
 	cancel()
 	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer shutdownCancel()
-	mgr.Shutdown(shutdownCtx)
+	_ = mgr.Shutdown(shutdownCtx)
 }
 
 func TestManager_RestartAlways(t *testing.T) {
@@ -136,27 +136,23 @@ func TestManager_RestartAlways(t *testing.T) {
 		t.Fatalf("Start() error: %v", err)
 	}
 
-	// Wait for it to restart a few times
-	time.Sleep(3 * time.Second)
-
 	mgr.mu.Lock()
 	svc := mgr.services[0]
 	mgr.mu.Unlock()
-	// With "always" and exit code 0, failures still increment (consecutive exits)
-	// but it should still be restarting
-	abandoned := svc.isAbandoned()
 
-	// The process exits immediately with 0, so failures increment each time
-	// After 3, it should be abandoned
-	if !abandoned {
-		// It may not yet be abandoned if timing is tight; just check it attempted restarts
-		t.Log("service not yet abandoned, checking it was restarted")
+	deadline := time.After(10 * time.Second)
+	for !svc.isAbandoned() && svc.currentFailures() == 0 {
+		select {
+		case <-deadline:
+			t.Fatal("timed out waiting for restart attempts under always policy")
+		case <-time.After(100 * time.Millisecond):
+		}
 	}
 
 	cancel()
 	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer shutdownCancel()
-	mgr.Shutdown(shutdownCtx)
+	_ = mgr.Shutdown(shutdownCtx)
 }
 
 func TestManager_RestartNo(t *testing.T) {
@@ -191,7 +187,7 @@ func TestManager_RestartNo(t *testing.T) {
 	cancel()
 	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer shutdownCancel()
-	mgr.Shutdown(shutdownCtx)
+	_ = mgr.Shutdown(shutdownCtx)
 }
 
 func TestManager_MaxRestarts(t *testing.T) {
@@ -229,7 +225,7 @@ func TestManager_MaxRestarts(t *testing.T) {
 	cancel()
 	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer shutdownCancel()
-	mgr.Shutdown(shutdownCtx)
+	_ = mgr.Shutdown(shutdownCtx)
 }
 
 func TestManager_LogFiles(t *testing.T) {
@@ -251,7 +247,7 @@ func TestManager_LogFiles(t *testing.T) {
 
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
-	mgr.Shutdown(shutdownCtx)
+	_ = mgr.Shutdown(shutdownCtx)
 
 	home := os.Getenv("HOME")
 	logDir := filepath.Join(home, ".scion", "services", "logs")
@@ -309,7 +305,7 @@ func TestManager_ServiceEnv(t *testing.T) {
 
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
-	mgr.Shutdown(shutdownCtx)
+	_ = mgr.Shutdown(shutdownCtx)
 
 	home := os.Getenv("HOME")
 	logDir := filepath.Join(home, ".scion", "services", "logs")
@@ -371,7 +367,7 @@ func TestManager_StartOrder(t *testing.T) {
 
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	mgr.Shutdown(shutdownCtx)
+	_ = mgr.Shutdown(shutdownCtx)
 }
 
 func TestMergeEnv(t *testing.T) {

@@ -53,7 +53,7 @@ func runTemplateValidate(cmd *cobra.Command, args []string) error {
 		return err
 	}
 	if hubCtx == nil {
-		return fmt.Errorf("Hub integration is not enabled. Use 'scion hub enable' first")
+		return fmt.Errorf("hub integration is not enabled, use 'scion hub enable' first")
 	}
 
 	PrintUsingHub(hubCtx.Endpoint)
@@ -166,7 +166,7 @@ func runHarnessConfigValidate(cmd *cobra.Command, args []string) error {
 		return err
 	}
 	if hubCtx == nil {
-		return fmt.Errorf("Hub integration is not enabled. Use 'scion hub enable' first")
+		return fmt.Errorf("hub integration is not enabled, use 'scion hub enable' first")
 	}
 
 	PrintUsingHub(hubCtx.Endpoint)
@@ -268,9 +268,10 @@ func printValidationReport(name string, report *hubclient.ValidationReport) erro
 		}
 	}
 
-	if report.ResourceKind == "template" {
+	switch report.ResourceKind {
+	case "template":
 		fmt.Printf("\nRun 'scion template sync %s' to repair.\n", name)
-	} else if report.ResourceKind == "harness-config" {
+	case "harness-config":
 		fmt.Printf("\nRun 'scion harness-config sync %s' to repair.\n", name)
 	}
 

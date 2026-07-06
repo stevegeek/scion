@@ -513,7 +513,7 @@ func downloadSkillFile(ctx context.Context, fileURL, destPath string, maxSize in
 	if err != nil {
 		return fmt.Errorf("download failed: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		return fmt.Errorf("download failed with status %d", resp.StatusCode)
@@ -526,14 +526,14 @@ func downloadSkillFile(ctx context.Context, fileURL, destPath string, maxSize in
 	if err != nil {
 		return fmt.Errorf("failed to create file: %w", err)
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 
 	n, err := io.Copy(f, limitedReader)
 	if err != nil {
 		return fmt.Errorf("failed to write file: %w", err)
 	}
 	if n > maxSize {
-		f.Close()
+		_ = f.Close()
 		_ = os.Remove(destPath)
 		return fmt.Errorf("file exceeds maximum size of %d bytes", maxSize)
 	}

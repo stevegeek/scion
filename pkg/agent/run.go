@@ -436,7 +436,8 @@ func (m *AgentManager) Start(ctx context.Context, opts api.StartOptions) (*api.A
 	authEnvOverlay := buildAuthEnvOverlay(opts.Env, opts.ResolvedSecrets)
 
 	canFallbackToNoAuth := func() bool {
-		return opts.HarnessAuth == "" && noAuthConfig != nil && noAuthConfig.Behavior == "drop-to-shell"
+		return opts.HarnessAuth == "" && noAuthConfig != nil &&
+			(noAuthConfig.Behavior == "drop-to-shell" || noAuthConfig.Behavior == "allow")
 	}
 
 	var auth api.AuthConfig
@@ -691,7 +692,7 @@ authDone:
 				util.Debugf("Start: failed to write token file: %v", err)
 			} else if err := os.Rename(tmp, tokenPath); err != nil {
 				util.Debugf("Start: failed to rename token file: %v", err)
-				os.Remove(tmp)
+				_ = os.Remove(tmp)
 			} else {
 				util.Debugf("Start: wrote agent token to %s", tokenPath)
 			}
@@ -919,7 +920,8 @@ authDone:
 		GitClone:   opts.GitClone,
 		SharedDirs: effectiveSharedDirs,
 		BrokerMode: opts.BrokerMode,
-		NoAuth:     opts.NoAuth && noAuthConfig != nil && noAuthConfig.Behavior == "drop-to-shell",
+		NoAuth: opts.NoAuth && noAuthConfig != nil &&
+			(noAuthConfig.Behavior == "drop-to-shell" || noAuthConfig.Behavior == "allow"),
 		NoAuthMessage: func() string {
 			if opts.NoAuth && noAuthConfig != nil && noAuthConfig.Behavior == "drop-to-shell" {
 				return noAuthConfig.Message
