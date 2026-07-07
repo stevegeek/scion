@@ -74,7 +74,7 @@ The Hub supports multiple end-user authentication modes to balance ease of devel
 
 ### OAuth 2.0 (Production)
 Scion supports Google and GitHub as identity providers. Configuration requires creating OAuth Apps in the respective provider consoles.
-See the [Authentication Guide](/scion/hub-admin/auth/) for detailed setup instructions.
+See the [Authentication Guide](/scion/hosted/single-node/auth/) for detailed setup instructions.
 
 ### Dev Auth (Local Development, workstation mode)
 For local testing, the Hub can auto-generate a development token:
@@ -85,9 +85,9 @@ server:
 ```
 The token is written to `~/.scion/dev-token` on startup. The CLI and Web Dashboard automatically detect this token when running on the same machine.
 
-### Personal Access Tokens (Programmatic)
+### User Access Tokens (Programmatic)
 
-The Hub supports long-lived Personal Access Tokens (PATs) for CI/CD or other programmatic integrations.
+The Hub supports long-lived **user access tokens (UATs)** for CI/CD or other programmatic integrations. See [User Access Tokens](/scion/hosted/user/personal-access-tokens/).
 
 ## GCP Identity & Hub-Minted Service Accounts
 
@@ -110,7 +110,7 @@ Projects can be configured with default GCP identities that are automatically ve
 
 Administrative actions for GCP Service Account management require `project-owner` (`ActionManage`) permissions to enforce strict security boundaries. Direct API access to Hub secrets from agents is explicitly blocked to prevent credential leakage.
 
-For more details on how agents assume these identities via metadata server emulation, see the [Authentication Guide](/scion/hub-admin/auth/#gcp-identity--metadata-emulation).
+For more details on how agents assume these identities via metadata server emulation, see the [Authentication Guide](/scion/hosted/single-node/auth/#gcp-identity--metadata-emulation).
 
 ## Project Settings & Agent Limits
 
@@ -219,7 +219,7 @@ Once configured, the Hub will automatically forward messages with severity-based
 
 The Hub supports structured logging and can forward its internal logs and traces to an OpenTelemetry-compatible backend (like Google Cloud Logging/Trace).
 
-To enable log forwarding, set `SCION_OTEL_LOG_ENABLED=true` and `SCION_OTEL_ENDPOINT`. See the [Observability Guide](/scion/hub-admin/observability/) for full details on centralizing system logs and agent metrics.
+To enable log forwarding, set `SCION_OTEL_LOG_ENABLED=true` and `SCION_OTEL_ENDPOINT`. See the [Observability Guide](/scion/hosted/single-node/observability/) for full details on centralizing system logs and agent metrics.
 
 ## Monitoring
 

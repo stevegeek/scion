@@ -13,6 +13,10 @@ Scion uses a multi-layered configuration system to manage orchestrator behavior,
 | `scion-agent.yaml` | **Agent Blueprint**. Defines the configuration for a specific agent or template. | Template or Agent | [Agent Configuration](/scion/reference/agent-config/) |
 | `state.yaml` | **Runtime State**. Tracks system state like sync timestamps. | Project (`.scion`) | N/A (Managed by Scion) |
 
+:::note[YAML or JSON]
+Scion accepts both YAML and JSON for `settings` and `scion-agent` files. YAML is preferred: `scion init` writes `settings.yaml`, and when several files coexist the loader resolves them in the order `settings.yaml` → `settings.yml` → `settings.json` (the same precedence applies to `scion-agent.*`). Use whichever format you prefer, but keep the content valid for that format — do not place JSON objects inside a `.yaml` file. Both formats validate against the [settings JSON schema](https://github.com/GoogleCloudPlatform/scion/blob/main/pkg/config/schemas/settings-v1.schema.json).
+:::
+
 ## Server Configuration
 
 Server configuration (for Hub and Runtime Broker) is now integrated into `settings.yaml` under the `server` key.
@@ -24,7 +28,7 @@ Server configuration (for Hub and Runtime Broker) is now integrated into `settin
 Telemetry settings control agent observability — trace collection, cloud forwarding, privacy filtering, and debug output. These are configured via the `telemetry` block in `settings.yaml` and can be overridden per-template or per-agent in `scion-agent.yaml`.
 
 - [Orchestrator Settings — Telemetry](/scion/reference/orchestrator-settings/#telemetry-configuration-telemetry)
-- [Metrics & OpenTelemetry Guide](/scion/hub-admin/metrics/)
+- [Metrics & OpenTelemetry Guide](/scion/hosted/single-node/metrics/)
 
 ## Project Settings
 

@@ -20,7 +20,31 @@ Scion supports multiple authentication methods for different use cases:
 
 - **OAuth (Google/GitHub)**: For production web and CLI authentication.
 - **Development Auth**: For local development and testing.
-- **Personal Access Tokens (PATs)**: For programmatic access and CI/CD pipelines.
+- **User Access Tokens (UATs)**: For programmatic access and CI/CD pipelines.
+
+## Tenancy: single- vs multi-user
+
+**Tenancy** is whether a deployment serves one identity or many. It is **orthogonal** to the
+availability tier — either hosted tier ([Single-node](/scion/hosted/single-node/overview/) or
+[HA](/scion/hosted/ha/overview/)) can be single- or multi-user. [Local](/scion/choosing-a-mode/)
+and [Workstation](/scion/workstation/workstation-server/) modes are single-user by construction.
+
+- **Single-user** — one principal, with simple auth: a workstation developer token, or a single
+  OAuth identity. There are no other users to isolate, so Groups and access policies are not
+  needed.
+- **Multi-user** — many principals authenticated through an OAuth identity provider (Google or
+  GitHub). Access is governed by Hub **Groups** (named collections of users) and access policies
+  that decide who can see and act on what.
+
+Deciding to run multi-user is what turns on the rest of this page's OAuth setup, domain
+authorization, and the RBAC model. For the authorization model itself — Groups, roles, and
+policy bindings — see [Identity & Access (RBAC)](/scion/hosted/ha/permissions/).
+
+:::note[Terminology]
+Prefer **single-user / multi-user** over "single-tenant / multi-tenant"; in Scion, "multi-tenancy"
+is reserved for organizational isolation, a different concern. See the
+[Glossary](/scion/glossary/).
+:::
 
 ## OAuth Authentication
 
@@ -129,7 +153,7 @@ Brokers never store agent secrets (like API keys) on disk.
 3. The Broker projects secrets into the agent container based on their type (environment variable, JSON file, or filesystem path).
 4. When the agent is deleted, the secrets are purged from the host.
 
-For details on configuring and managing secrets, see [Secret Management](/scion/hub-user/secrets/).
+For details on configuring and managing secrets, see [Secret Management](/scion/hosted/user/secrets/).
 
 ## GCP Identity & Metadata Emulation
 
@@ -180,7 +204,7 @@ Projects can be linked to specific GitHub App installations. The system automati
 
 Users can authenticate the CLI against a Scion Hub using the following flow:
 
-1.  **Login**: `scion auth login` opens a browser to the dashboard login page.
+1.  **Login**: `scion hub auth login` opens a browser to the dashboard login page.
 2.  **Exchange**: After successful login, the dashboard provides a token (or the CLI exchanges a code).
 3.  **Storage**: The token is stored in `~/.scion/config.json`.
 
@@ -191,9 +215,11 @@ Agents are automatically authenticated. When the Hub dispatches an agent to a Ru
 - Tokens are scoped to the specific agent and its project.
 - Tokens have a default expiration (typically 24 hours), but Scion implements an automated token refresh mechanism to ensure long-running agents maintain valid authorization throughout extended tasks.
 
-## Personal Access Tokens
+## User Access Tokens
 
-For programmatic access (e.g., CI/CD pipelines), the Hub supports Personal Access Tokens (PATs).
-- Tokens can be generated via the Web Dashboard or CLI.
-- Tokens are prefixed with `scion_pat_`.
+For programmatic access (e.g., CI/CD pipelines), the Hub supports **user access tokens (UATs)**.
+- Tokens can be generated via the Web Dashboard or CLI (`scion hub token create`).
+- Tokens are prefixed with `scion_pat_` (a legacy artifact of the older "personal access token" name).
 - Use the `Authorization: Bearer <token>` header in your requests.
+
+See [User Access Tokens](/scion/hosted/user/personal-access-tokens/) for the full user-facing guide.
