@@ -799,17 +799,10 @@ export class ScionPageOnboarding extends LitElement {
       }
 
       if (this.selectedRuntime === 'container') {
-        try {
-          const dnsRes = await apiFetch('/api/v1/system/apple-dns', { method: 'POST' });
-          if (dnsRes.ok) {
-            const dnsData = await dnsRes.json() as { configured: boolean; hostname: string; ip: string; error?: string };
-            if (!dnsData.configured) {
-              this.dnsWarning = `Apple Container DNS setup requires sudo. If not prompted, run manually:\n  sudo container system dns create ${dnsData.hostname} --localhost ${dnsData.ip}`;
-            }
-          }
-        } catch {
-          // non-fatal — server startup will retry on next launch
-        }
+        this.dnsWarning =
+          'Apple Container requires a DNS rule for agent connectivity. Run once (and after each reboot):\n' +
+          '  sudo container system dns create host.containers.internal --localhost 203.0.113.1\n' +
+          'See: https://googlecloudplatform.github.io/scion/local/apple-container/';
       }
 
       this.currentStep = 3;

@@ -42,20 +42,22 @@ func AppleDNSRuleExists(ctx context.Context, hostname string) (bool, error) {
 	return false, nil
 }
 
-// EnsureAppleDNS always attempts to create (or recreate) the DNS rule.
-// This is necessary because PF rules do not persist across macOS reboots
-// even though DNS entries do, so we must re-run the create command on
-// every server startup to restore the packet filter rule.
+// EnsureAppleDNS attempts to create (or recreate) the DNS rule using
+// non-interactive sudo (sudo -n). This prevents password prompts from
+// leaking to the user's terminal when the server runs as a daemon.
+// PF rules do not persist across macOS reboots even though DNS entries
+// do, so the create command must be re-run to restore the packet filter
+// rule.
 func EnsureAppleDNS(ctx context.Context, hostname, ip string) (bool, error) {
-	cmd := exec.CommandContext(ctx, "sudo", "container", "system", "dns", "create", hostname, "--localhost", ip)
+	cmd := exec.CommandContext(ctx, "sudo", "-n", "container", "system", "dns", "create", hostname, "--localhost", ip)
 	if out, err := cmd.CombinedOutput(); err != nil {
 		// Create failed — likely the entry already exists (possibly with a
 		// different IP). Delete it and retry.
-		delCmd := exec.CommandContext(ctx, "sudo", "container", "system", "dns", "delete", hostname)
+		delCmd := exec.CommandContext(ctx, "sudo", "-n", "container", "system", "dns", "delete", hostname)
 		if delOut, delErr := delCmd.CombinedOutput(); delErr != nil {
 			return false, fmt.Errorf("sudo container system dns delete failed: %w (output: %s); original create error: %v (output: %s)", delErr, string(delOut), err, string(out))
 		}
-		retryCmd := exec.CommandContext(ctx, "sudo", "container", "system", "dns", "create", hostname, "--localhost", ip)
+		retryCmd := exec.CommandContext(ctx, "sudo", "-n", "container", "system", "dns", "create", hostname, "--localhost", ip)
 		if retryOut, retryErr := retryCmd.CombinedOutput(); retryErr != nil {
 			return false, fmt.Errorf("sudo container system dns create (retry after delete) failed: %w (output: %s)", retryErr, string(retryOut))
 		}

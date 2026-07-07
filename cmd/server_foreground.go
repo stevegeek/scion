@@ -1714,15 +1714,16 @@ func startRuntimeBroker(ctx context.Context, cmd *cobra.Command, cfg *config.Glo
 	}
 
 	if rt != nil && rt.Name() == "container" && containerHubEndpoint != "" {
-		_, dnsErr := runtime.EnsureAppleDNS(ctx, runtime.AppleDNSHostname, runtime.AppleDNSIP)
-		if dnsErr != nil {
-			log.Printf("WARNING: Failed to configure Apple Container DNS (%s → %s): %v\n"+
-				"Agents may not reach the Hub. Run manually:\n"+
-				"  sudo container system dns create %s --localhost %s",
-				runtime.AppleDNSHostname, runtime.AppleDNSIP, dnsErr,
-				runtime.AppleDNSHostname, runtime.AppleDNSIP)
+		exists, checkErr := runtime.AppleDNSRuleExists(ctx, runtime.AppleDNSHostname)
+		if checkErr != nil {
+			log.Printf("WARNING: could not check Apple Container DNS status: %v", checkErr)
+		} else if exists {
+			log.Printf("Apple Container DNS rule already configured: %s → %s", runtime.AppleDNSHostname, runtime.AppleDNSIP)
 		} else {
-			log.Printf("Refreshed Apple Container DNS rule: %s → %s (PF rule restored)", runtime.AppleDNSHostname, runtime.AppleDNSIP)
+			log.Printf("Apple Container runtime detected. To enable agent connectivity, run once:\n"+
+				"  sudo container system dns create %s --localhost %s\n"+
+				"  See: https://googlecloudplatform.github.io/scion/",
+				runtime.AppleDNSHostname, runtime.AppleDNSIP)
 		}
 	}
 
