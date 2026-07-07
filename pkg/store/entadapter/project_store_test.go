@@ -620,3 +620,48 @@ func TestSyncState_DeleteAndNotFound(t *testing.T) {
 	require.NoError(t, ps.DeleteProjectSyncState(ctx, projectID, ""))
 	assert.ErrorIs(t, ps.DeleteProjectSyncState(ctx, projectID, ""), store.ErrNotFound)
 }
+
+// TestListProjects_CursorPagination verifies ListProjects honors ListOptions.Cursor
+// and enumerates every project across pages with no gaps or duplicates. Before the
+// keyset-pagination fix the cursor was ignored and NextCursor was never set, so a
+// caller could only ever see the first (default 50-row) page.
+func TestListProjects_CursorPagination(t *testing.T) {
+	ps := newTestProjectStore(t)
+	ctx := context.Background()
+
+	const total = 125 // more than two default pages
+	created := make(map[string]bool, total)
+	for i := 0; i < total; i++ {
+		p := newProject(i)
+		require.NoError(t, ps.CreateProject(ctx, p))
+		created[p.ID] = true
+	}
+
+	// A single default call must not exceed one page, and must advertise more.
+	first, err := ps.ListProjects(ctx, store.ProjectFilter{}, store.ListOptions{})
+	require.NoError(t, err)
+	assert.LessOrEqual(t, len(first.Items), 50, "default page must cap at 50 rows")
+	assert.NotEmpty(t, first.NextCursor, "more pages exist, so NextCursor must be set")
+
+	// Walking the cursor must enumerate every project exactly once.
+	seen := make(map[string]bool, total)
+	cursor := ""
+	for pages := 0; ; pages++ {
+		require.LessOrEqual(t, pages, total, "pagination did not terminate")
+		page, err := ps.ListProjects(ctx, store.ProjectFilter{}, store.ListOptions{Cursor: cursor})
+		require.NoError(t, err)
+		for _, p := range page.Items {
+			require.False(t, seen[p.ID], "duplicate project across pages: %s", p.ID)
+			seen[p.ID] = true
+		}
+		if page.NextCursor == "" {
+			break
+		}
+		cursor = page.NextCursor
+	}
+
+	assert.Len(t, seen, total, "cursor pagination must enumerate every project")
+	for id := range created {
+		assert.True(t, seen[id], "project missing from pagination: %s", id)
+	}
+}

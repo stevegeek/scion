@@ -24,6 +24,7 @@ import (
 	"github.com/GoogleCloudPlatform/scion/pkg/api"
 	"github.com/GoogleCloudPlatform/scion/pkg/ent"
 	"github.com/GoogleCloudPlatform/scion/pkg/ent/agent"
+	"github.com/GoogleCloudPlatform/scion/pkg/ent/predicate"
 	"github.com/GoogleCloudPlatform/scion/pkg/ent/project"
 	"github.com/GoogleCloudPlatform/scion/pkg/ent/projectcontributor"
 	"github.com/GoogleCloudPlatform/scion/pkg/ent/projectsyncstate"
@@ -428,9 +429,17 @@ func (s *ProjectStore) ListProjects(ctx context.Context, filter store.ProjectFil
 		limit = 50
 	}
 
+	if opts.Cursor != "" {
+		pred, err := s.projectCursorPredicate(ctx, opts.Cursor)
+		if err != nil {
+			return nil, err
+		}
+		query.Where(pred)
+	}
+
 	rows, err := query.
-		Order(ent.Desc(project.FieldCreated)).
-		Limit(limit).
+		Order(ent.Desc(project.FieldCreated), ent.Desc(project.FieldID)).
+		Limit(limit + 1).
 		All(ctx)
 	if err != nil {
 		return nil, err
@@ -445,10 +454,32 @@ func (s *ProjectStore) ListProjects(ctx context.Context, filter store.ProjectFil
 		items = append(items, *sp)
 	}
 
-	return &store.ListResult[store.Project]{
+	result := &store.ListResult[store.Project]{
 		Items:      items,
 		TotalCount: totalCount,
-	}, nil
+	}
+	if len(items) > limit {
+		result.NextCursor = items[limit-1].ID
+		result.Items = items[:limit]
+	}
+	return result, nil
+}
+
+// projectCursorPredicate builds the keyset predicate for paginating after the
+// project identified by cursor (a project ID).
+func (s *ProjectStore) projectCursorPredicate(ctx context.Context, cursor string) (predicate.Project, error) {
+	cursorUID, err := parseUUID(cursor)
+	if err != nil {
+		return nil, fmt.Errorf("invalid cursor: %w", err)
+	}
+	c, err := s.client.Project.Get(ctx, cursorUID)
+	if err != nil {
+		return nil, fmt.Errorf("invalid cursor: %w", mapError(err))
+	}
+	return project.Or(
+		project.CreatedLT(c.Created),
+		project.And(project.CreatedEQ(c.Created), project.IDLT(cursorUID)),
+	), nil
 }
 
 // populateProjectComputed fills the computed (non-persisted) fields on a project:
