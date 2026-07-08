@@ -807,15 +807,7 @@ authDone:
 		}
 	}
 
-	repoRoot := ""
-	if effectiveWorkspace != "" && util.IsGitRepoDir(effectiveWorkspace) {
-		commonDir, err := util.GetCommonGitDir(effectiveWorkspace)
-		if err == nil {
-			repoRoot = filepath.Dir(commonDir)
-		}
-	} else if util.IsGitRepoDir(projectDir) {
-		repoRoot, _ = util.RepoRootDir(projectDir)
-	}
+	repoRoot := detectRepoRoot(opts.Workspace, effectiveWorkspace, projectDir)
 
 	// Telemetry defaults to enabled when not explicitly set to false.
 	telemetryEnabled := finalScionCfg != nil && finalScionCfg.Telemetry != nil &&
@@ -1018,6 +1010,29 @@ authDone:
 		HarnessAuth:           opts.HarnessAuth,
 		Profile:               profileName,
 	}, nil
+}
+
+// detectRepoRoot resolves the git repo root to bind-mount for an agent, or ""
+// for a plain in-place workspace mount. An explicit --workspace skips git
+// detection: a workspace that merely sits inside a repo must not be widened to
+// the whole repo, matching ProvisionAgent, which mounts it directly "even if
+// inside a repo" (provision.go).
+func detectRepoRoot(explicitWorkspace, effectiveWorkspace, projectDir string) string {
+	if explicitWorkspace != "" {
+		return ""
+	}
+	if effectiveWorkspace != "" && util.IsGitRepoDir(effectiveWorkspace) {
+		commonDir, err := util.GetCommonGitDir(effectiveWorkspace)
+		if err == nil {
+			return filepath.Dir(commonDir)
+		}
+		return ""
+	}
+	if util.IsGitRepoDir(projectDir) {
+		root, _ := util.RepoRootDir(projectDir)
+		return root
+	}
+	return ""
 }
 
 // extractWorkspaceFromVolumes finds a volume mounted to /workspace and returns its source path.
