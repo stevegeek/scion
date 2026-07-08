@@ -476,6 +476,11 @@ type ScionConfig struct {
 	Task   string `json:"task,omitempty" yaml:"task,omitempty"`
 	Branch string `json:"branch,omitempty" yaml:"branch,omitempty"`
 
+	// ExplicitWorkspace records that /workspace is a user-provided --workspace
+	// path, bind-mounted directly with no git worktree/branch, even when inside a
+	// repo. Persisted so resume/restart honors the same contract as first start.
+	ExplicitWorkspace bool `json:"explicit_workspace,omitempty" yaml:"explicit_workspace,omitempty"`
+
 	// Info contains persisted metadata about the agent
 	Info *AgentInfo `json:"-" yaml:"-"`
 }

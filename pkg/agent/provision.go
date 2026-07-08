@@ -476,6 +476,7 @@ func ProvisionAgent(ctx context.Context, agentName string, templateName string, 
 
 	var workspaceSource string
 	shouldCreateWorktree := false
+	explicitWorkspace := false
 
 	// Check for git clone mode from context
 	gitClone := api.GitCloneFromContext(ctx)
@@ -521,6 +522,7 @@ func ProvisionAgent(ctx context.Context, agentName string, templateName string, 
 
 		workspaceSource = absWorkspace
 		agentWorkspace = "" // We are not using the managed local workspace directory
+		explicitWorkspace = true
 
 	} else if isGit {
 		// Case 2: Git Repository (and no explicit workspace)
@@ -1086,6 +1088,9 @@ func ProvisionAgent(ctx context.Context, agentName string, templateName string, 
 			ReadOnly: false,
 		})
 	}
+	if explicitWorkspace {
+		finalScionCfg.ExplicitWorkspace = true
+	}
 
 	// Update agent-specific scion-agent.json
 	if finalScionCfg == nil {
@@ -1602,6 +1607,23 @@ func GetAgent(ctx context.Context, agentName string, templateName string, agentI
 			if root, rootErr := util.RepoRootDir(filepath.Dir(agentWorkspace)); rootErr == nil {
 				_ = util.PruneWorktreesIn(root)
 			}
+		}
+	}
+
+	// An explicit --workspace agent has no managed per-agent worktree: its mount
+	// is the operator's own directory, recovered on resume from the persisted
+	// /workspace volume (see effectiveWorkspace in run.go). Treat it like a
+	// shared-workspace agent by clearing agentWorkspace, so the managed-worktree
+	// recovery below is skipped. Otherwise, when projectDir is itself a git repo,
+	// that recovery would CreateWorktree a throwaway managed worktree and the
+	// agent would silently edit that phantom branch instead of the operator's
+	// explicit tree — breaking "edit the real tree in place" on resume.
+	if agentWorkspace != "" && config.ScionAgentConfigExists(agentDir) {
+		if persisted, cfgErr := (&config.Template{Path: agentDir}).LoadConfig(); cfgErr != nil {
+			util.Debugf("GetAgent: could not load persisted config to check explicit workspace: %v", cfgErr)
+		} else if persisted.ExplicitWorkspace {
+			util.Debugf("GetAgent: explicit-workspace agent %q — skipping managed-worktree recovery", agentName)
+			agentWorkspace = ""
 		}
 	}
 

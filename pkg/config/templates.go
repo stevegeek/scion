@@ -777,6 +777,9 @@ func MergeScionConfig(base, override *api.ScionConfig) *api.ScionConfig {
 	if override.Task != "" {
 		result.Task = override.Task
 	}
+	if override.ExplicitWorkspace {
+		result.ExplicitWorkspace = true
+	}
 	if override.Branch != "" {
 		result.Branch = override.Branch
 	}
