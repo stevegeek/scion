@@ -84,6 +84,21 @@ func (s *Server) handleAdminServerConfig(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
+	// In postgres mode, delegate to the DB-backed handlers that use
+	// OperationalSettings for Layer-1 reads/writes (design §3.8).
+	// File/SQLite mode keeps the exact current behavior (file read/write).
+	if ops := s.GetOperationalSettings(); ops != nil && s.IsPostgres() {
+		switch r.Method {
+		case http.MethodGet:
+			s.handleGetServerConfigDB(w, r, ops)
+		case http.MethodPut:
+			s.handlePutServerConfigDB(w, r, ops)
+		default:
+			MethodNotAllowed(w)
+		}
+		return
+	}
+
 	switch r.Method {
 	case http.MethodGet:
 		s.handleGetServerConfig(w)
@@ -213,6 +228,10 @@ func (s *Server) handlePutServerConfig(w http.ResponseWriter, r *http.Request) {
 
 // reloadSettings re-reads the settings file and applies runtime-changeable values.
 // Returns a summary of what was reloaded and what requires a restart.
+//
+// This is the file-mode path: it loads GlobalConfig from settings.yaml,
+// builds a Layer1Snapshot, and delegates to applySnapshot. In postgres mode,
+// the OperationalSettings service provides the snapshot instead.
 func (s *Server) reloadSettings() map[string]interface{} {
 	results := map[string]interface{}{
 		"applied":          []string{},
@@ -226,88 +245,18 @@ func (s *Server) reloadSettings() map[string]interface{} {
 		return results
 	}
 
-	applied := []string{}
-	needsRestart := []string{}
+	snap := BuildLayer1SnapshotFromFile(gc)
+	results = ApplySnapshot(s, snap)
 
-	// Reload telemetry default and full config
-	s.mu.Lock()
-	if gc.TelemetryEnabled != nil {
-		oldVal := s.config.TelemetryDefault
-		s.config.TelemetryDefault = gc.TelemetryEnabled
-		if oldVal == nil || *oldVal != *gc.TelemetryEnabled {
-			applied = append(applied, "telemetry_default")
-		}
-	}
-	if gc.TelemetryConfig != nil {
-		s.config.TelemetryConfig = config.ConvertV1TelemetryToAPI(gc.TelemetryConfig)
-		applied = append(applied, "telemetry_config")
-	}
-
-	// Reload admin emails
-	if len(gc.Hub.AdminEmails) > 0 {
-		s.config.AdminEmails = gc.Hub.AdminEmails
-		applied = append(applied, "admin_emails")
-	}
-
-	// Reload auto-suspend stalled setting
-	oldAutoSuspend := s.config.AutoSuspendStalled
-	s.config.AutoSuspendStalled = gc.Hub.AutoSuspendStalled
-	if oldAutoSuspend != gc.Hub.AutoSuspendStalled {
-		applied = append(applied, "auto_suspend_stalled")
-	}
-
-	// Reload user access mode
-	if gc.Auth.UserAccessMode != "" {
-		s.config.UserAccessMode = gc.Auth.UserAccessMode
-		applied = append(applied, "user_access_mode")
-	} else if s.config.UserAccessMode != "" {
-		s.config.UserAccessMode = ""
-		applied = append(applied, "user_access_mode")
-	}
-
-	// Reload log level
+	// Log level is a Layer-0 setting (per design §3.1) — only applied in
+	// file mode via reloadSettings, not through OperationalSettings.
 	if gc.LogLevel != "" {
-		var level slog.Level
-		switch gc.LogLevel {
-		case "debug":
-			level = slog.LevelDebug
-		case "info":
-			level = slog.LevelInfo
-		case "warn":
-			level = slog.LevelWarn
-		case "error":
-			level = slog.LevelError
-		}
-		slog.SetLogLoggerLevel(level)
+		applySnapshotLogLevel(gc.LogLevel)
+		applied := results["applied"].([]string)
 		applied = append(applied, "log_level")
+		results["applied"] = applied
 	}
 
-	// Reload GitHub App non-sensitive config
-	if gc.GitHubApp.AppID != 0 {
-		s.config.GitHubAppConfig.AppID = gc.GitHubApp.AppID
-		s.config.GitHubAppConfig.APIBaseURL = gc.GitHubApp.APIBaseURL
-		s.config.GitHubAppConfig.WebhooksEnabled = gc.GitHubApp.WebhooksEnabled
-		s.config.GitHubAppConfig.InstallationURL = gc.GitHubApp.InstallationURL
-		if gc.GitHubApp.PrivateKeyPath != "" {
-			s.config.GitHubAppConfig.PrivateKeyPath = gc.GitHubApp.PrivateKeyPath
-		}
-		// In-memory private key and webhook secret are kept as-is (loaded from secrets backend)
-		applied = append(applied, "github_app")
-	}
-	s.mu.Unlock()
-
-	// Settings that require restart
-	needsRestart = append(needsRestart,
-		"hub.port", "hub.host",
-		"broker.port", "broker.host",
-		"database.driver", "database.url",
-		"auth.dev_mode",
-		"oauth",
-		"secrets.backend",
-	)
-
-	results["applied"] = applied
-	results["requires_restart"] = needsRestart
 	return results
 }
 
@@ -438,6 +387,17 @@ func maskSensitiveFields(resp *ServerConfigResponse) {
 	if resp.Server.Secrets != nil {
 		if resp.Server.Secrets.GCPCredentials != "" {
 			resp.Server.Secrets.GCPCredentials = "********"
+		}
+	}
+
+	// N1: Mask GitHubApp private key and webhook secret (pre-existing gap,
+	// applies to both DB-mode and file-mode GET paths).
+	if resp.Server.GitHubApp != nil {
+		if resp.Server.GitHubApp.PrivateKey != "" {
+			resp.Server.GitHubApp.PrivateKey = "********"
+		}
+		if resp.Server.GitHubApp.WebhookSecret != "" {
+			resp.Server.GitHubApp.WebhookSecret = "********"
 		}
 	}
 

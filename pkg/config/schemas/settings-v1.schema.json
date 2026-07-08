@@ -734,6 +734,12 @@
           "description": "Preserve workspace files during soft-delete period.",
           "x-env-var": "SCION_SERVER_HUB_SOFT_DELETE_RETAIN_FILES",
           "x-since": "1"
+        },
+        "auto_suspend_stalled": {
+          "type": "boolean",
+          "description": "Automatically suspend stalled agents.",
+          "x-env-var": "SCION_SERVER_HUB_AUTO_SUSPEND_STALLED",
+          "x-since": "1"
         }
       }
     },
@@ -836,6 +842,12 @@
           "type": "array",
           "items": { "type": "string" },
           "x-env-var": "SCION_SERVER_AUTH_AUTHORIZEDDOMAINS"
+        },
+        "user_access_mode": {
+          "type": "string",
+          "description": "Controls user access: 'open' (anyone can sign in), 'invite' (admin must invite), 'closed' (no new users).",
+          "x-env-var": "SCION_SERVER_AUTH_USER_ACCESS_MODE",
+          "x-since": "1"
         }
       }
     },

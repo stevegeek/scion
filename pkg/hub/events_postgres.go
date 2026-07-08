@@ -87,6 +87,11 @@ type PostgresEventPublisher struct {
 	// desired counts how many subscriptions need each channel LISTENed.
 	desired map[string]int
 	closed  bool
+
+	// onReconnect is called each time the listener reconnects after a
+	// connection loss. Used by settings propagation (Phase 4) to trigger
+	// an unconditional Refresh that covers notifications missed during the gap.
+	onReconnect func()
 }
 
 // pgSubscription is a single Subscribe registration.
@@ -372,6 +377,15 @@ func (p *PostgresEventPublisher) Close() {
 	p.desired = make(map[string]int)
 }
 
+// SetOnReconnect sets a callback invoked each time the listener reconnects
+// after a connection loss. Used by settings propagation (Phase 4) to trigger
+// an unconditional Refresh that covers notifications missed during the gap.
+func (p *PostgresEventPublisher) SetOnReconnect(fn func()) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.onReconnect = fn
+}
+
 // runListener maintains a dedicated connection that LISTENs on the desired
 // channels and dispatches received notifications. It reconnects with backoff and
 // re-LISTENs (resubscribes) after any connection loss.
@@ -383,6 +397,7 @@ func (p *PostgresEventPublisher) runListener() {
 		maxBackoff = 10 * time.Second
 	)
 	backoff := minBackoff
+	firstConnect := true
 
 	for {
 		if p.ctx.Err() != nil {
@@ -401,6 +416,38 @@ func (p *PostgresEventPublisher) runListener() {
 			backoff = nextBackoff(backoff, maxBackoff)
 			continue
 		}
+
+		if !firstConnect {
+			// Reconnect after connection loss — invoke the callback so
+			// subscribers can refresh state missed during the gap (Phase 4
+			// settings propagation uses this).
+			//
+			// The callback runs in a goroutine to avoid blocking the
+			// listener loop: a slow post-reconnect refresh (e.g. a DB
+			// round-trip under load) would otherwise delay notification
+			// processing until the refresh completes. The tradeoff is that
+			// a notification arriving during the refresh could be processed
+			// before the refresh finishes, leading to a brief window where
+			// the local cache is stale. This is acceptable because:
+			//   1. The refresh itself is idempotent (revision-based diff).
+			//   2. Any event processed concurrently triggers its own
+			//      refreshAndApply, which will pick up the latest state.
+			//   3. The 60s poll backstop provides an additional safety net.
+			p.mu.RLock()
+			fn := p.onReconnect
+			p.mu.RUnlock()
+			if fn != nil {
+				go func() {
+					defer func() {
+						if r := recover(); r != nil {
+							p.log.Error("Reconnect callback panicked", "panic", r)
+						}
+					}()
+					fn()
+				}()
+			}
+		}
+		firstConnect = false
 
 		p.log.Info("Event listener connected")
 		backoff = minBackoff
