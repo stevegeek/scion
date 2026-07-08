@@ -1406,6 +1406,77 @@ func TestGetAgent_RecreatesMissingWorktree(t *testing.T) {
 	}
 }
 
+// TestGetAgent_ExplicitWorkspaceSkipsWorktreeRecovery is the resume counterpart
+// to the widening guard: an explicit --workspace agent must NOT get a managed
+// worktree recreated on resume, even when the project dir is itself a git repo.
+// Its mount is the operator's own tree, recovered downstream from the /workspace
+// volume, so GetAgent returns an empty managed workspace path (mirroring a
+// shared-workspace agent) rather than silently editing a phantom worktree branch.
+func TestGetAgent_ExplicitWorkspaceSkipsWorktreeRecovery(t *testing.T) {
+	t.Setenv("SCION_HOST_UID", "") // Clear container context for worktree ops
+	tmpDir := t.TempDir()
+
+	oldWd, _ := os.Getwd()
+	_ = os.Chdir(tmpDir)
+	defer func() { _ = os.Chdir(oldWd) }()
+
+	originalHome := os.Getenv("HOME")
+	defer func() { _ = os.Setenv("HOME", originalHome) }()
+	_ = os.Setenv("HOME", tmpDir)
+
+	// The trap: the project root is itself a git repo.
+	projectDir := filepath.Join(tmpDir, "project")
+	_ = os.MkdirAll(projectDir, 0755)
+	for _, args := range [][]string{
+		{"init"},
+		{"config", "user.email", "test@example.com"},
+		{"config", "user.name", "Test"},
+		{"commit", "--allow-empty", "-m", "initial"},
+	} {
+		cmd := exec.Command("git", args...)
+		cmd.Dir = projectDir
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %v failed: %v\n%s", args, err, out)
+		}
+	}
+
+	// Set up .scion structure + global default template harness config.
+	scionDir := filepath.Join(projectDir, ".scion")
+	_ = os.MkdirAll(filepath.Join(scionDir, "templates"), 0755)
+	globalScionDir := filepath.Join(tmpDir, ".scion")
+	_ = os.MkdirAll(filepath.Join(globalScionDir, "templates"), 0755)
+	seedTestHarnessConfig(t, globalScionDir, "generic", "generic")
+	tplDir := filepath.Join(globalScionDir, "templates", "default")
+	_ = os.MkdirAll(tplDir, 0755)
+	_ = os.WriteFile(filepath.Join(tplDir, "scion-agent.json"), []byte(`{"default_harness_config":"generic"}`), 0644)
+
+	agentName := "explicit-ws-agent"
+	agentDir := filepath.Join(scionDir, "agents", agentName)
+	agentWorkspace := filepath.Join(agentDir, "workspace")
+	agentHome := config.GetAgentHomePath(scionDir, agentName)
+	_ = os.MkdirAll(agentDir, 0755)
+	_ = os.MkdirAll(agentHome, 0755)
+
+	// Persist an EXISTING explicit-workspace agent: config carries the flag, and
+	// (as for a real explicit agent) there is no managed worktree on disk.
+	_ = os.WriteFile(filepath.Join(agentDir, "scion-agent.json"),
+		[]byte(`{"harness":"generic","default_harness_config":"generic","explicit_workspace":true}`), 0644)
+	_ = os.WriteFile(filepath.Join(agentHome, "agent-info.json"),
+		[]byte(`{"name":"explicit-ws-agent","template":"default"}`), 0644)
+
+	// Resume: GetAgent must NOT recreate a managed worktree for an explicit agent.
+	_, _, wsPath, _, err := GetAgent(context.Background(), agentName, "", "", "", scionDir, "", "", "", "")
+	if err != nil {
+		t.Fatalf("GetAgent failed: %v", err)
+	}
+	if wsPath != "" {
+		t.Fatalf("explicit-workspace agent: expected empty managed workspace path on resume, got %q", wsPath)
+	}
+	if _, statErr := os.Stat(agentWorkspace); !os.IsNotExist(statErr) {
+		t.Fatalf("explicit-workspace agent: expected NO phantom worktree at %s, but one was created", agentWorkspace)
+	}
+}
+
 // TestGetAgent_StaleDirectoryCreatesWorkspace verifies that when an agent
 // directory exists without a config file (stale/incomplete provisioning),
 // GetAgent removes it and re-provisions with a valid workspace worktree.

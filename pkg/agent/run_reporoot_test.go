@@ -46,13 +46,36 @@ func TestDetectRepoRoot_ExplicitWorkspaceSkipsGitDetection(t *testing.T) {
 	}
 
 	// Explicit workspace = a subdir inside the repo -> no repo-root detection.
-	if got := detectRepoRoot(subA, subA, root); got != "" {
+	if got := detectRepoRoot(true, subA, root); got != "" {
 		t.Fatalf("explicit workspace inside repo: got repoRoot %q, want \"\"", got)
 	}
 
 	// Explicit workspace = the repo root itself -> still plain-mounted, "".
-	if got := detectRepoRoot(root, root, root); got != "" {
+	if got := detectRepoRoot(true, root, root); got != "" {
 		t.Fatalf("explicit workspace at repo root: got repoRoot %q, want \"\"", got)
+	}
+}
+
+// TestDetectRepoRoot_ExplicitWorkspaceResume covers resume/restart: opts.Workspace
+// is empty but the persisted ExplicitWorkspace flag re-derives explicit=true, so
+// the recovered explicit path must stay plain-mounted rather than widening to the
+// enclosing repo — for both a subdir and the repo root itself.
+func TestDetectRepoRoot_ExplicitWorkspaceResume(t *testing.T) {
+	root := t.TempDir()
+	setupGitRepo(t, root)
+	subA := filepath.Join(root, "subA")
+	if err := os.MkdirAll(subA, 0755); err != nil {
+		t.Fatalf("mkdir subA: %v", err)
+	}
+
+	// Explicit subdir recovered as effectiveWorkspace on resume -> "".
+	if got := detectRepoRoot(true, subA, root); got != "" {
+		t.Fatalf("resume explicit subdir workspace: got repoRoot %q, want \"\"", got)
+	}
+
+	// Explicit repo root recovered as effectiveWorkspace on resume -> "".
+	if got := detectRepoRoot(true, root, root); got != "" {
+		t.Fatalf("resume explicit repo-root workspace: got repoRoot %q, want \"\"", got)
 	}
 }
 
@@ -60,7 +83,7 @@ func TestDetectRepoRoot_ExplicitWorkspaceSkipsGitDetection(t *testing.T) {
 // workspace is unaffected (unchanged behavior).
 func TestDetectRepoRoot_ExplicitPlainWorkspace(t *testing.T) {
 	dir := t.TempDir() // plain dir, no git
-	if got := detectRepoRoot(dir, dir, dir); got != "" {
+	if got := detectRepoRoot(true, dir, dir); got != "" {
 		t.Fatalf("explicit plain workspace: got repoRoot %q, want \"\"", got)
 	}
 }
@@ -76,9 +99,9 @@ func TestDetectRepoRoot_AutoDetectFromWorkspace(t *testing.T) {
 		t.Fatalf("mkdir subA: %v", err)
 	}
 
-	// explicitWorkspace == "" -> detection runs; effective workspace is subA,
+	// explicit == false -> detection runs; effective workspace is subA,
 	// which is inside the repo, so repoRoot is the repository root.
-	got := eval(t, detectRepoRoot("", subA, root))
+	got := eval(t, detectRepoRoot(false, subA, root))
 	if want := eval(t, root); got != want {
 		t.Fatalf("auto-detect from workspace: got repoRoot %q, want %q", got, want)
 	}
@@ -92,7 +115,7 @@ func TestDetectRepoRoot_AutoDetectFromProjectDir(t *testing.T) {
 	setupGitRepo(t, root)
 	plain := t.TempDir() // effective workspace, not a git repo
 
-	got := eval(t, detectRepoRoot("", plain, root))
+	got := eval(t, detectRepoRoot(false, plain, root))
 	if want := eval(t, root); got != want {
 		t.Fatalf("auto-detect from project dir: got repoRoot %q, want %q", got, want)
 	}
@@ -102,7 +125,7 @@ func TestDetectRepoRoot_AutoDetectFromProjectDir(t *testing.T) {
 func TestDetectRepoRoot_NoGitAnywhere(t *testing.T) {
 	ws := t.TempDir()
 	proj := t.TempDir()
-	if got := detectRepoRoot("", ws, proj); got != "" {
+	if got := detectRepoRoot(false, ws, proj); got != "" {
 		t.Fatalf("no git anywhere: got repoRoot %q, want \"\"", got)
 	}
 }

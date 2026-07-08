@@ -807,7 +807,10 @@ authDone:
 		}
 	}
 
-	repoRoot := detectRepoRoot(opts.Workspace, effectiveWorkspace, projectDir)
+	// On resume/restart opts.Workspace is empty, so re-derive the explicit intent
+	// from the persisted config to keep the explicit workspace plain-mounted.
+	explicitWorkspace := opts.Workspace != "" || (finalScionCfg != nil && finalScionCfg.ExplicitWorkspace)
+	repoRoot := detectRepoRoot(explicitWorkspace, effectiveWorkspace, projectDir)
 
 	// Telemetry defaults to enabled when not explicitly set to false.
 	telemetryEnabled := finalScionCfg != nil && finalScionCfg.Telemetry != nil &&
@@ -1016,9 +1019,11 @@ authDone:
 // for a plain in-place workspace mount. An explicit --workspace skips git
 // detection: a workspace that merely sits inside a repo must not be widened to
 // the whole repo, matching ProvisionAgent, which mounts it directly "even if
-// inside a repo" (provision.go).
-func detectRepoRoot(explicitWorkspace, effectiveWorkspace, projectDir string) string {
-	if explicitWorkspace != "" {
+// inside a repo" (provision.go). explicit is set on first start (opts.Workspace)
+// and re-derived on resume from the persisted ExplicitWorkspace flag, so the
+// guarantee holds on every entry path.
+func detectRepoRoot(explicit bool, effectiveWorkspace, projectDir string) string {
+	if explicit {
 		return ""
 	}
 	if effectiveWorkspace != "" && util.IsGitRepoDir(effectiveWorkspace) {
