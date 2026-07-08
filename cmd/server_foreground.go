@@ -1358,6 +1358,12 @@ func initHubServer(ctx context.Context, cfg *config.GlobalConfig, s store.Store,
 		}
 	}
 
+	// Reconcile resource DB manifest hashes against actual GCS content.
+	// In multi-hub mode a peer hub may have uploaded newer files; this ensures
+	// the local DB reflects reality before any dispatch is attempted.
+	go hubSrv.SyncAllHarnessConfigsFromStorage(ctx)
+	go hubSrv.SyncAllTemplatesFromStorage(ctx)
+
 	log.Printf("Database: %s (%s)", cfg.Database.Driver, cfg.Database.URL)
 
 	// --- Settings-DB Phase 3: OperationalSettings wiring (§3.9) ---

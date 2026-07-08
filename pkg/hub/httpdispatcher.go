@@ -152,6 +152,11 @@ type HTTPAgentDispatcher struct {
 	events          EventPublisher
 	commandBus      CommandBus
 	dispatchMetrics dispatchmetrics.Recorder
+
+	// Resource hash repair callbacks sync a resource's DB manifest from GCS
+	// when a hash mismatch is detected during dispatch. Nil = no repair.
+	harnessConfigRepairer func(ctx context.Context, name string) error
+	templateRepairer      func(ctx context.Context, ref string) error
 }
 
 // NewHTTPAgentDispatcher creates a new HTTP-based agent dispatcher.
@@ -230,6 +235,90 @@ func (d *HTTPAgentDispatcher) SetCrossNodeDeps(events EventPublisher, bus Comman
 // SetDispatchMetrics wires the dispatch metrics recorder (B5-2).
 func (d *HTTPAgentDispatcher) SetDispatchMetrics(rec dispatchmetrics.Recorder) {
 	d.dispatchMetrics = rec
+}
+
+// SetHarnessConfigRepairer registers a callback that syncs a harness-config's
+// DB manifest from storage when a hash mismatch is detected during dispatch.
+func (d *HTTPAgentDispatcher) SetHarnessConfigRepairer(fn func(ctx context.Context, name string) error) {
+	d.harnessConfigRepairer = fn
+}
+
+// SetTemplateRepairer registers a callback that syncs a template's DB manifest
+// from storage when a hash mismatch is detected during dispatch.
+func (d *HTTPAgentDispatcher) SetTemplateRepairer(fn func(ctx context.Context, ref string) error) {
+	d.templateRepairer = fn
+}
+
+// isHashMismatchError reports whether err is a broker hash-mismatch error
+// from resource hydration (template or harness-config).
+func isHashMismatchError(err error) bool {
+	return err != nil && strings.Contains(err.Error(), "hash mismatch for file")
+}
+
+// repairHashMismatch attempts to sync the affected resource's DB manifest from
+// storage. It inspects the error prefix to determine whether a template or
+// harness-config needs repair. Returns nil on success so the caller can retry.
+func (d *HTTPAgentDispatcher) repairHashMismatch(ctx context.Context, agent *store.Agent, dispatchErr error) error {
+	if agent.AppliedConfig == nil {
+		return fmt.Errorf("no applied config")
+	}
+
+	msg := dispatchErr.Error()
+
+	// Route to the correct repairer based on the hydration error prefix.
+	if strings.Contains(msg, "Failed to hydrate template:") {
+		return d.repairTemplate(ctx, agent)
+	}
+	if strings.Contains(msg, "Failed to hydrate harness-config:") {
+		return d.repairHarnessConfig(ctx, agent)
+	}
+
+	// Prefix not recognized — try both (harness-config first, then template).
+	if err := d.repairHarnessConfig(ctx, agent); err == nil {
+		return nil
+	}
+	return d.repairTemplate(ctx, agent)
+}
+
+func (d *HTTPAgentDispatcher) repairHarnessConfig(ctx context.Context, agent *store.Agent) error {
+	if d.harnessConfigRepairer == nil || agent.AppliedConfig == nil || agent.AppliedConfig.HarnessConfig == "" {
+		return fmt.Errorf("no repairer or harness config")
+	}
+	name := agent.AppliedConfig.HarnessConfig
+	d.log.Warn("hash mismatch detected, attempting harness-config DB→storage repair",
+		"agent", agent.Slug, "harnessConfig", name)
+	if err := d.harnessConfigRepairer(ctx, name); err != nil {
+		d.log.Warn("harness-config repair failed", "harnessConfig", name, "error", err)
+		return err
+	}
+	d.log.Info("harness-config repair succeeded, retrying dispatch",
+		"agent", agent.Slug, "harnessConfig", name)
+	return nil
+}
+
+func (d *HTTPAgentDispatcher) repairTemplate(ctx context.Context, agent *store.Agent) error {
+	if d.templateRepairer == nil {
+		return fmt.Errorf("no template repairer")
+	}
+	var ref string
+	if agent.AppliedConfig != nil {
+		ref = agent.AppliedConfig.TemplateID
+	}
+	if ref == "" {
+		ref = agent.Template
+	}
+	if ref == "" {
+		return fmt.Errorf("no template reference")
+	}
+	d.log.Warn("hash mismatch detected, attempting template DB→storage repair",
+		"agent", agent.Slug, "template", ref)
+	if err := d.templateRepairer(ctx, ref); err != nil {
+		d.log.Warn("template repair failed", "template", ref, "error", err)
+		return err
+	}
+	d.log.Info("template repair succeeded, retrying dispatch",
+		"agent", agent.Slug, "template", ref)
+	return nil
 }
 
 // getBrokerEndpoint retrieves the endpoint URL for a runtime broker.
@@ -688,6 +777,11 @@ func (d *HTTPAgentDispatcher) DispatchAgentCreate(ctx context.Context, agent *st
 	}
 
 	resp, err := d.client.CreateAgent(ctx, agent.RuntimeBrokerID, endpoint, req)
+	if isHashMismatchError(err) {
+		if repairErr := d.repairHashMismatch(ctx, agent, err); repairErr == nil {
+			resp, err = d.client.CreateAgent(ctx, agent.RuntimeBrokerID, endpoint, req)
+		}
+	}
 	if err != nil {
 		return err
 	}
@@ -731,6 +825,11 @@ func (d *HTTPAgentDispatcher) DispatchAgentProvision(ctx context.Context, agent 
 	}
 
 	resp, err := d.client.CreateAgent(ctx, agent.RuntimeBrokerID, endpoint, req)
+	if isHashMismatchError(err) {
+		if repairErr := d.repairHashMismatch(ctx, agent, err); repairErr == nil {
+			resp, err = d.client.CreateAgent(ctx, agent.RuntimeBrokerID, endpoint, req)
+		}
+	}
 	if err != nil {
 		return err
 	}
@@ -771,6 +870,11 @@ func (d *HTTPAgentDispatcher) DispatchAgentCreateWithGather(ctx context.Context,
 		"agent_id", agent.ID, "agent", agent.Name,
 		"brokerElapsed", time.Since(brokerCallStart).String(),
 		"totalElapsed", time.Since(dispatchStart).String())
+	if isHashMismatchError(err) {
+		if repairErr := d.repairHashMismatch(ctx, agent, err); repairErr == nil {
+			resp, envReqs, err = d.client.CreateAgentWithGather(ctx, agent.RuntimeBrokerID, endpoint, req)
+		}
+	}
 	if errors.Is(err, ErrLifecycleDeferred) {
 		return d.deferredCreateWithGather(ctx, agent)
 	}
@@ -1188,6 +1292,11 @@ func (d *HTTPAgentDispatcher) DispatchAgentStart(ctx context.Context, agent *sto
 	}
 
 	resp, err := d.client.StartAgent(ctx, agent.RuntimeBrokerID, endpoint, agent.Slug, agent.ProjectID, task, projectPath, projectSlug, harnessConfig, resolvedEnv, resolvedSecrets, inlineConfig, projectInfo.sharedDirs, projectInfo.sharedWorkspace, resume)
+	if isHashMismatchError(err) {
+		if repairErr := d.repairHashMismatch(ctx, agent, err); repairErr == nil {
+			resp, err = d.client.StartAgent(ctx, agent.RuntimeBrokerID, endpoint, agent.Slug, agent.ProjectID, task, projectPath, projectSlug, harnessConfig, resolvedEnv, resolvedSecrets, inlineConfig, projectInfo.sharedDirs, projectInfo.sharedWorkspace, resume)
+		}
+	}
 	if errors.Is(err, ErrLifecycleDeferred) {
 		return d.deferredStart(ctx, agent, &StartDispatchArgs{
 			Task:   task,
