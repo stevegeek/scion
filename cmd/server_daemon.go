@@ -31,6 +31,27 @@ import (
 	"github.com/spf13/cobra"
 )
 
+// appendDaemonBoolFlag forwards a boolean flag to the --foreground daemon child.
+//
+// The child re-runs applyWorkstationDefaults, which re-enables any
+// workstation-defaulted flag (--enable-hub, --enable-runtime-broker,
+// --enable-web, --dev-auth, --auto-provide) that it does not see as explicitly
+// set. So a flag the user explicitly disabled must be forwarded as
+// --flag=<value>, not merely omitted when false — otherwise the child treats it
+// as unset and the workstation default silently flips it back on (e.g.
+// `scion server start --dev-auth=false` would still start with dev-auth
+// enabled). When the flag was not set explicitly, keep the historical bare form
+// (present only when true).
+func appendDaemonBoolFlag(cmd *cobra.Command, args []string, name string, val bool) []string {
+	if cmd.Flags().Changed(name) {
+		return append(args, fmt.Sprintf("--%s=%t", name, val))
+	}
+	if val {
+		return append(args, "--"+name)
+	}
+	return args
+}
+
 // runServerStartOrDaemon handles the server start command. By default it launches
 // the server as a background daemon. When --foreground is set, it runs directly.
 func runServerStartOrDaemon(cmd *cobra.Command, args []string) error {
@@ -91,24 +112,19 @@ func runServerStartOrDaemon(cmd *cobra.Command, args []string) error {
 	if hostedMode {
 		daemonArgs = append(daemonArgs, "--hosted")
 	}
-	if enableHub {
-		daemonArgs = append(daemonArgs, "--enable-hub")
-	}
-	if enableRuntimeBroker {
-		daemonArgs = append(daemonArgs, "--enable-runtime-broker")
-	}
-	if enableWeb {
-		daemonArgs = append(daemonArgs, "--enable-web")
-	}
-	if enableDevAuth {
-		daemonArgs = append(daemonArgs, "--dev-auth")
-	}
+	// Workstation-defaulted bools must be forwarded as --flag=<value> when set
+	// explicitly, so an explicit disable survives into the --foreground child.
+	// Forwarding "bare when true" alone loses --enable-web=false / --dev-auth=false
+	// etc.: the child sees the flag as unset and applyWorkstationDefaults re-enables
+	// it. See appendDaemonBoolFlag.
+	daemonArgs = appendDaemonBoolFlag(cmd, daemonArgs, "enable-hub", enableHub)
+	daemonArgs = appendDaemonBoolFlag(cmd, daemonArgs, "enable-runtime-broker", enableRuntimeBroker)
+	daemonArgs = appendDaemonBoolFlag(cmd, daemonArgs, "enable-web", enableWeb)
+	daemonArgs = appendDaemonBoolFlag(cmd, daemonArgs, "dev-auth", enableDevAuth)
 	if enableDebug {
 		daemonArgs = append(daemonArgs, "--debug")
 	}
-	if serverAutoProvide {
-		daemonArgs = append(daemonArgs, "--auto-provide")
-	}
+	daemonArgs = appendDaemonBoolFlag(cmd, daemonArgs, "auto-provide", serverAutoProvide)
 	daemonArgs = append(daemonArgs, fmt.Sprintf("--host=%s", hubHost))
 	if cmd.Flags().Changed("port") {
 		daemonArgs = append(daemonArgs, fmt.Sprintf("--port=%d", hubPort))
@@ -332,21 +348,15 @@ func runServerRestart(cmd *cobra.Command, args []string) error {
 
 	if daemonArgs == nil {
 		// No saved args — reconstruct from current flags (legacy behavior).
+		// Forward explicit disables (see appendDaemonBoolFlag) so a restart
+		// without saved args cannot silently re-enable dev-auth or a component.
 		daemonArgs = []string{"server", "start", "--foreground"}
 		if enableHub || enableRuntimeBroker || enableWeb {
-			if enableHub {
-				daemonArgs = append(daemonArgs, "--enable-hub")
-			}
-			if enableRuntimeBroker {
-				daemonArgs = append(daemonArgs, "--enable-runtime-broker")
-			}
-			if enableWeb {
-				daemonArgs = append(daemonArgs, "--enable-web")
-			}
+			daemonArgs = appendDaemonBoolFlag(cmd, daemonArgs, "enable-hub", enableHub)
+			daemonArgs = appendDaemonBoolFlag(cmd, daemonArgs, "enable-runtime-broker", enableRuntimeBroker)
+			daemonArgs = appendDaemonBoolFlag(cmd, daemonArgs, "enable-web", enableWeb)
 		}
-		if enableDevAuth {
-			daemonArgs = append(daemonArgs, "--dev-auth")
-		}
+		daemonArgs = appendDaemonBoolFlag(cmd, daemonArgs, "dev-auth", enableDevAuth)
 		if enableDebug {
 			daemonArgs = append(daemonArgs, "--debug")
 		}
