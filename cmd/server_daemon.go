@@ -348,15 +348,29 @@ func runServerRestart(cmd *cobra.Command, args []string) error {
 
 	if daemonArgs == nil {
 		// No saved args — reconstruct from current flags (legacy behavior).
-		// Forward explicit disables (see appendDaemonBoolFlag) so a restart
-		// without saved args cannot silently re-enable dev-auth or a component.
+		// NOTE: these flags are registered on serverStartCmd, not
+		// serverRestartCmd, so during `server restart` the globals stay at
+		// their defaults and this fallback effectively yields just
+		// ["server", "start", "--foreground"]. That is a pre-existing
+		// limitation of the restart path; the daemon-start fix above
+		// (appendDaemonBoolFlag in runServerStart, whose corrected args are
+		// persisted via SaveArgs and reloaded by the normal restart path)
+		// is where explicit disables are honored.
 		daemonArgs = []string{"server", "start", "--foreground"}
 		if enableHub || enableRuntimeBroker || enableWeb {
-			daemonArgs = appendDaemonBoolFlag(cmd, daemonArgs, "enable-hub", enableHub)
-			daemonArgs = appendDaemonBoolFlag(cmd, daemonArgs, "enable-runtime-broker", enableRuntimeBroker)
-			daemonArgs = appendDaemonBoolFlag(cmd, daemonArgs, "enable-web", enableWeb)
+			if enableHub {
+				daemonArgs = append(daemonArgs, "--enable-hub")
+			}
+			if enableRuntimeBroker {
+				daemonArgs = append(daemonArgs, "--enable-runtime-broker")
+			}
+			if enableWeb {
+				daemonArgs = append(daemonArgs, "--enable-web")
+			}
 		}
-		daemonArgs = appendDaemonBoolFlag(cmd, daemonArgs, "dev-auth", enableDevAuth)
+		if enableDevAuth {
+			daemonArgs = append(daemonArgs, "--dev-auth")
+		}
 		if enableDebug {
 			daemonArgs = append(daemonArgs, "--debug")
 		}
