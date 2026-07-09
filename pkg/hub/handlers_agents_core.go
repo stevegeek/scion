@@ -552,6 +552,13 @@ func (s *Server) createAgentInProject(
 		agent.Template = resolvedTemplate.Slug
 	}
 
+	if req.Config != nil && req.Config.ThinkingLevel != nil {
+		if tl := *req.Config.ThinkingLevel; tl < 0 || tl > 100 {
+			BadRequest(w, "thinking_level must be between 0 and 100")
+			return
+		}
+	}
+
 	agent.AppliedConfig = s.buildAppliedConfig(req, harnessConfig, creatorName)
 
 	// Populate GCP identity in applied config.
@@ -1516,6 +1523,14 @@ func (s *Server) updateAgent(w http.ResponseWriter, r *http.Request, id string) 
 		if cfg.Model != "" {
 			agent.AppliedConfig.Model = cfg.Model
 		}
+		if cfg.ThinkingLevel != nil {
+			if tl := *cfg.ThinkingLevel; tl < 0 || tl > 100 {
+				BadRequest(w, "thinking_level must be between 0 and 100")
+				return
+			}
+		}
+		// Always apply thinking level from config (nil = explicit unset)
+		agent.AppliedConfig.ThinkingLevel = cfg.ThinkingLevel
 		if cfg.Task != "" {
 			agent.AppliedConfig.Task = cfg.Task
 		}
