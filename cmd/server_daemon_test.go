@@ -15,6 +15,7 @@
 package cmd
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/spf13/cobra"
@@ -61,4 +62,70 @@ func TestAppendDaemonBoolFlagForwardsExplicitDisable(t *testing.T) {
 	c = newBoolFlagCmd(t, "enable-web", "--enable-web=false")
 	assert.Equal(t, []string{"server", "start", "--enable-web=false"},
 		appendDaemonBoolFlag(c, []string{"server", "start"}, "enable-web", false))
+}
+
+// TestBuildDaemonStartArgsForwardsExplicitFlags checks that buildDaemonStartArgs
+// forwards every explicitly-set flag to the --foreground child — the workstation
+// disable (--enable-web=false), the non-workstation bools, and the string/int
+// flags that are otherwise lost across the re-exec — while omitting unset ones.
+func TestBuildDaemonStartArgsForwardsExplicitFlags(t *testing.T) {
+	resetServerFlags()
+	// Globals resetServerFlags doesn't cover:
+	noAutoMigrate, enableTestLogin, simulateRemoteBroker = false, false, false
+	templateCacheDir, webAssetsDir, webBaseURL, adminEmails = "", "", "", ""
+	templateCacheMax, globalMode = 0, false
+	defer func() {
+		resetServerFlags()
+		noAutoMigrate, enableTestLogin, simulateRemoteBroker = false, false, false
+		templateCacheDir, webAssetsDir, webBaseURL, adminEmails = "", "", "", ""
+		templateCacheMax, globalMode = 0, false
+	}()
+
+	c := &cobra.Command{Use: "start", RunE: func(*cobra.Command, []string) error { return nil }}
+	f := c.Flags()
+	f.BoolVar(&enableWeb, "enable-web", false, "")
+	f.BoolVar(&enableDevAuth, "dev-auth", false, "")
+	f.BoolVar(&noAutoMigrate, "no-auto-migrate", false, "")
+	f.BoolVar(&enableTestLogin, "enable-test-login", false, "")
+	f.BoolVar(&simulateRemoteBroker, "simulate-remote-broker", false, "")
+	f.StringVar(&templateCacheDir, "template-cache-dir", "", "")
+	f.Int64Var(&templateCacheMax, "template-cache-max", 100*1024*1024, "")
+	f.StringVar(&webAssetsDir, "web-assets-dir", "", "")
+	f.StringVar(&webSessionSecret, "session-secret", "", "")
+	f.StringVar(&webBaseURL, "base-url", "", "")
+	f.StringVar(&adminEmails, "admin-emails", "", "")
+
+	c.SetArgs([]string{
+		"--enable-web=false", // explicit workstation-default disable (the core fix)
+		"--no-auto-migrate",
+		"--simulate-remote-broker=true",
+		"--session-secret=s3cr3t",
+		"--base-url=https://scion.example.com",
+		"--admin-emails=a@x.com,b@y.com",
+		"--template-cache-max=42",
+	})
+	if err := c.Execute(); err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+
+	got := buildDaemonStartArgs(c)
+
+	assert.Equal(t, []string{"server", "start", "--foreground"}, got[:3])
+	for _, want := range []string{
+		"--enable-web=false",
+		"--no-auto-migrate=true", // helper normalizes bare --no-auto-migrate to =true
+		"--simulate-remote-broker=true",
+		"--session-secret=s3cr3t",
+		"--base-url=https://scion.example.com",
+		"--admin-emails=a@x.com,b@y.com",
+		"--template-cache-max=42",
+	} {
+		assert.Contains(t, got, want)
+	}
+	// Unset flags are not forwarded.
+	assert.NotContains(t, got, "--enable-test-login")
+	for _, a := range got {
+		assert.False(t, strings.HasPrefix(a, "--web-assets-dir="), "web-assets-dir omitted when unset")
+		assert.False(t, strings.HasPrefix(a, "--template-cache-dir="), "template-cache-dir omitted when unset")
+	}
 }
