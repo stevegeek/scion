@@ -18,6 +18,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/GoogleCloudPlatform/scion/pkg/config"
 	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/assert"
 )
@@ -151,4 +152,93 @@ func TestBuildDaemonStartArgsForwardsExplicitHost(t *testing.T) {
 		t.Fatalf("parse: %v", err)
 	}
 	assert.Contains(t, buildDaemonStartArgs(c), "--host=1.2.3.4")
+}
+
+// TestDaemonArgsFromConfig_WorkstationOmitsUnrecoverableFlags is the
+// regression guard for the broken `server restart` fallback: when no
+// daemon.SaveArgs snapshot exists, workstation mode (the default, empty
+// cfg.Mode) has nothing worth forwarding — GlobalConfig carries none of
+// the workstation-defaulted settings, so the reconstruction must leave the
+// child's own applyWorkstationDefaults to enable everything, exactly as a
+// bare `scion server start` would.
+func TestDaemonArgsFromConfig_WorkstationOmitsUnrecoverableFlags(t *testing.T) {
+	cfg := config.GlobalConfig{} // zero value: Mode == "", nothing set
+
+	got := daemonArgsFromConfig(&cfg, false)
+
+	assert.Equal(t, []string{"server", "start", "--foreground"}, got)
+}
+
+// TestDaemonArgsFromConfig_HostedForwardsRecoverableSettings proves the
+// fallback now reconstructs a hosted-mode daemon from whatever the
+// persisted server config actually carries, instead of silently collapsing
+// to a bare workstation-mode `server start --foreground` (the pre-existing
+// bug: cmd.Flags().Changed(...) was always false on serverRestartCmd, so
+// every flag global read its zero value).
+func TestDaemonArgsFromConfig_HostedForwardsRecoverableSettings(t *testing.T) {
+	cfg := config.DefaultGlobalConfig()
+	cfg.Mode = "hosted"
+	cfg.RuntimeBroker.Enabled = true
+	cfg.Auth.Enabled = true
+	cfg.Hub.Host = "10.0.0.5"
+	cfg.Hub.Port = 8811
+	cfg.RuntimeBroker.Port = 8801
+	cfg.Database.URL = "postgres://example/hub"
+	cfg.Storage.Bucket = "my-bucket"
+
+	got := daemonArgsFromConfig(&cfg, false)
+
+	assert.Contains(t, got, "--hosted")
+	assert.Contains(t, got, "--enable-runtime-broker=true")
+	assert.Contains(t, got, "--dev-auth=true")
+	assert.Contains(t, got, "--host=10.0.0.5")
+	assert.Contains(t, got, "--port=8811")
+	assert.Contains(t, got, "--runtime-broker-port=8801")
+	assert.Contains(t, got, "--db=postgres://example/hub")
+	assert.Contains(t, got, "--storage-bucket=my-bucket")
+
+	// Hub/Web enablement and auto-provide have no persisted representation
+	// in config.GlobalConfig at all — they must NOT be fabricated.
+	assert.NotContains(t, got, "--enable-hub")
+	assert.NotContains(t, got, "--enable-web")
+	assert.NotContains(t, got, "--auto-provide")
+}
+
+// TestDaemonArgsFromConfig_HostedForwardsExplicitDisables mirrors the
+// appendDaemonBoolFlag fix this branch builds on: a hosted deployment that
+// has runtime-broker/dev-auth disabled in its config must restart with
+// those forwarded as explicit "=false", not silently omitted (which reads
+// as "unset" to the child and would fall through to its own default).
+func TestDaemonArgsFromConfig_HostedForwardsExplicitDisables(t *testing.T) {
+	cfg := config.DefaultGlobalConfig()
+	cfg.Mode = "hosted"
+	cfg.RuntimeBroker.Enabled = false
+	cfg.Auth.Enabled = false
+
+	got := daemonArgsFromConfig(&cfg, false)
+
+	assert.Contains(t, got, "--enable-runtime-broker=false")
+	assert.Contains(t, got, "--dev-auth=false")
+}
+
+// TestDaemonArgsFromConfig_ProductionModeAliasesHosted covers the legacy
+// "production" mode value, which loadAndReconcileConfig treats identically
+// to "hosted".
+func TestDaemonArgsFromConfig_ProductionModeAliasesHosted(t *testing.T) {
+	cfg := config.GlobalConfig{Mode: "production"}
+
+	got := daemonArgsFromConfig(&cfg, false)
+
+	assert.Contains(t, got, "--hosted")
+}
+
+// TestDaemonArgsFromConfig_GlobalModeForwarded verifies the one setting that
+// genuinely is available on serverRestartCmd (a persistent root flag) is
+// still threaded through, matching runServerStartOrDaemon's own handling.
+func TestDaemonArgsFromConfig_GlobalModeForwarded(t *testing.T) {
+	cfg := config.GlobalConfig{}
+
+	got := daemonArgsFromConfig(&cfg, true)
+
+	assert.Contains(t, got, "--global")
 }

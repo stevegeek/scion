@@ -361,6 +361,72 @@ func runServerStopForce(globalDir string, pidRunning bool, pid int, serverPorts 
 	return nil
 }
 
+// daemonArgsFromConfig reconstructs `server start --foreground` launch
+// arguments from the persisted server configuration, for use when no
+// saved-args snapshot exists (see the fallback in runServerRestart). It
+// mirrors the workstation-vs-hosted resolution in loadAndReconcileConfig,
+// but can only forward settings that are actually recorded in
+// config.GlobalConfig — CLI-only flags with no config representation are
+// intentionally left unset here so the child falls back to its own
+// documented defaults instead of a fabricated guess:
+//
+//   - Workstation mode (cfg.Mode is empty/"workstation", the default): the
+//     component/auth/host flags are omitted entirely and left for the
+//     --foreground child's own applyWorkstationDefaults to resolve, which
+//     enables Hub, Runtime Broker, Web, dev-auth and auto-provide and binds
+//     to loopback — exactly what a bare `scion server start` does, and the
+//     one case the pre-existing fallback already reconstructed correctly.
+//
+//   - Hosted mode (cfg.Mode == "hosted"/"production"): --hosted has no
+//     workstation-style default, so component enablement must come from
+//     somewhere. GlobalConfig only records RuntimeBroker.Enabled and
+//     Auth.Enabled — there is no persisted field for Hub or Web enablement
+//     (HubServerConfig has no Enabled field, and GlobalConfig has no Web
+//     server section at all) or for --auto-provide. Those three are left
+//     unset, matching what `scion server start --hosted` with no other
+//     flags would do; if that yields zero enabled components, the child's
+//     own "no server components enabled" check — and the restart's
+//     post-start liveness check — fail loudly rather than silently
+//     degrading.
+//
+// Ports, database URL and storage settings are not reset by the
+// workstation-vs-hosted branch in loadAndReconcileConfig, so they are safe
+// to forward in both modes.
+func daemonArgsFromConfig(cfg *config.GlobalConfig, globalMode bool) []string {
+	daemonArgs := []string{"server", "start", "--foreground"}
+
+	hosted := cfg.Mode == "hosted" || cfg.Mode == "production"
+	if hosted {
+		daemonArgs = append(daemonArgs, "--hosted")
+		daemonArgs = append(daemonArgs, fmt.Sprintf("--enable-runtime-broker=%t", cfg.RuntimeBroker.Enabled))
+		daemonArgs = append(daemonArgs, fmt.Sprintf("--dev-auth=%t", cfg.Auth.Enabled))
+		if cfg.Hub.Host != "" {
+			daemonArgs = append(daemonArgs, fmt.Sprintf("--host=%s", cfg.Hub.Host))
+		}
+	}
+
+	if cfg.Hub.Port != 0 {
+		daemonArgs = append(daemonArgs, fmt.Sprintf("--port=%d", cfg.Hub.Port))
+	}
+	if cfg.RuntimeBroker.Port != 0 {
+		daemonArgs = append(daemonArgs, fmt.Sprintf("--runtime-broker-port=%d", cfg.RuntimeBroker.Port))
+	}
+	if cfg.Database.URL != "" {
+		daemonArgs = append(daemonArgs, fmt.Sprintf("--db=%s", cfg.Database.URL))
+	}
+	if cfg.Storage.Bucket != "" {
+		daemonArgs = append(daemonArgs, fmt.Sprintf("--storage-bucket=%s", cfg.Storage.Bucket))
+	}
+	if cfg.Storage.LocalPath != "" {
+		daemonArgs = append(daemonArgs, fmt.Sprintf("--storage-dir=%s", cfg.Storage.LocalPath))
+	}
+	if globalMode {
+		daemonArgs = append(daemonArgs, "--global")
+	}
+
+	return daemonArgs
+}
+
 func runServerRestart(cmd *cobra.Command, args []string) error {
 	globalDir, err := config.GetGlobalDir()
 	if err != nil {
@@ -390,40 +456,27 @@ func runServerRestart(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("failed to find scion executable: %w", err)
 	}
 
-	// Load saved args from previous start, or fall back to reconstructing from flags.
+	// Load saved args from previous start, or fall back to reconstructing from config.
 	daemonArgs, err := daemon.LoadArgs(serverDaemonComponent, globalDir)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Warning: failed to load saved args: %v\n", err)
 	}
 
 	if daemonArgs == nil {
-		// No saved args — reconstruct from current flags (legacy behavior).
-		// NOTE: these flags are registered on serverStartCmd, not
-		// serverRestartCmd, so during `server restart` the globals stay at
-		// their defaults and this fallback effectively yields just
-		// ["server", "start", "--foreground"]. That is a pre-existing
-		// limitation of the restart path; the daemon-start fix above
-		// (appendDaemonBoolFlag in runServerStart, whose corrected args are
-		// persisted via SaveArgs and reloaded by the normal restart path)
-		// is where explicit disables are honored.
-		daemonArgs = []string{"server", "start", "--foreground"}
-		if enableHub || enableRuntimeBroker || enableWeb {
-			if enableHub {
-				daemonArgs = append(daemonArgs, "--enable-hub")
-			}
-			if enableRuntimeBroker {
-				daemonArgs = append(daemonArgs, "--enable-runtime-broker")
-			}
-			if enableWeb {
-				daemonArgs = append(daemonArgs, "--enable-web")
-			}
+		// No saved args snapshot — this happens when the running daemon was
+		// started by a scion build that predates daemon.SaveArgs, or the
+		// snapshot file was removed/corrupted out from under it. Reading the
+		// package-level flag globals here would not help: they are
+		// registered on serverStartCmd, not serverRestartCmd (see
+		// cmd/server.go), so cmd.Flags().Changed(...) is always false and
+		// every global stays at its zero value. Reconstruct instead from the
+		// persisted server configuration — see daemonArgsFromConfig for
+		// exactly what can and cannot be recovered this way.
+		cfg, cfgErr := config.LoadGlobalConfig("")
+		if cfgErr != nil {
+			return fmt.Errorf("no saved daemon args, and failed to load server configuration to reconstruct them: %w", cfgErr)
 		}
-		if enableDevAuth {
-			daemonArgs = append(daemonArgs, "--dev-auth")
-		}
-		if enableDebug {
-			daemonArgs = append(daemonArgs, "--debug")
-		}
+		daemonArgs = daemonArgsFromConfig(cfg, globalMode)
 	}
 
 	fmt.Println("Starting server with new binary...")
@@ -436,6 +489,13 @@ func runServerRestart(cmd *cobra.Command, args []string) error {
 	running, pid, _ = daemon.StatusComponent(serverDaemonComponent, globalDir)
 	if !running {
 		return fmt.Errorf("daemon failed to start. Check log at: %s", daemon.GetLogPathComponent(serverDaemonComponent, globalDir))
+	}
+
+	// Refresh the saved-args snapshot so a subsequent restart can use the
+	// exact args this one launched with — including when this restart itself
+	// had to reconstruct them from config because no snapshot existed yet.
+	if err := daemon.SaveArgs(serverDaemonComponent, globalDir, daemonArgs); err != nil {
+		fmt.Fprintf(os.Stderr, "Warning: failed to save daemon args: %v\n", err)
 	}
 
 	fmt.Printf("Server restarted (PID: %d)\n", pid)
