@@ -48,6 +48,8 @@ type PullResult struct {
 	Image  string `json:"image"`
 	Status string `json:"status"` // "queued" | "exists" | "pulling" | "done" | "error"
 	Error  string `json:"error,omitempty"`
+	Index  int    `json:"index"` // 1-based position in the pull queue
+	Total  int    `json:"total"` // total number of images being pulled
 }
 
 // PullImages pulls the images for the given harnesses, streaming PullResult
@@ -58,30 +60,31 @@ func PullImages(ctx context.Context, rt Runtime, harnesses []string, registry st
 		return fmt.Errorf("no valid harness images to pull")
 	}
 
+	total := len(images)
 	for _, img := range images {
 		onEvent(PullResult{Image: img, Status: "queued"})
 	}
 
-	for _, img := range images {
+	for i, img := range images {
 		if err := ctx.Err(); err != nil {
 			return err
 		}
 		exists, err := rt.ImageExists(ctx, img)
 		if err != nil {
-			onEvent(PullResult{Image: img, Status: "error", Error: err.Error()})
+			onEvent(PullResult{Image: img, Status: "error", Error: err.Error(), Index: i + 1, Total: total})
 			continue
 		}
 		if exists {
-			onEvent(PullResult{Image: img, Status: "exists"})
+			onEvent(PullResult{Image: img, Status: "exists", Index: i + 1, Total: total})
 			continue
 		}
 
-		onEvent(PullResult{Image: img, Status: "pulling"})
+		onEvent(PullResult{Image: img, Status: "pulling", Index: i + 1, Total: total})
 		if err := rt.PullImage(ctx, img); err != nil {
-			onEvent(PullResult{Image: img, Status: "error", Error: err.Error()})
+			onEvent(PullResult{Image: img, Status: "error", Error: err.Error(), Index: i + 1, Total: total})
 			continue
 		}
-		onEvent(PullResult{Image: img, Status: "done"})
+		onEvent(PullResult{Image: img, Status: "done", Index: i + 1, Total: total})
 	}
 
 	return nil

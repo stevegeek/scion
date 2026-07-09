@@ -91,6 +91,8 @@ export class ScionPageOnboarding extends LitElement {
   @state() private imageCheckStatuses = new Map<string, { imageStatus: string; source?: string | undefined; checking?: boolean | undefined }>();
   @state() private imagePulling = false;
   @state() private imageRechecking = false;
+  @state() private pullIndex = 0;
+  @state() private pullTotal = 0;
   @state() private gitVersion = '';
   @state() private gitVersionOK = true;
   private imageEventSource: EventSource | null = null;
@@ -325,6 +327,18 @@ export class ScionPageOnboarding extends LitElement {
 
     .loading-state sl-spinner {
       font-size: 2rem;
+    }
+
+    .pull-summary {
+      margin-bottom: 1rem;
+      display: flex;
+      flex-direction: column;
+      gap: 0.5rem;
+    }
+
+    .pull-summary-text {
+      font-size: 0.875rem;
+      color: var(--scion-text-muted, #64748b);
     }
 
     .image-list {
@@ -872,6 +886,17 @@ export class ScionPageOnboarding extends LitElement {
           <p>Loading harness configurations...</p>
         </div>
       ` : html`
+        ${this.imagePulling && this.pullTotal > 0 ? html`
+          <div class="pull-summary">
+            <div class="pull-summary-text">
+              Pulling image ${this.pullIndex} of ${this.pullTotal}...
+            </div>
+            <sl-progress-bar
+              value=${Math.round((this.pullIndex / this.pullTotal) * 100)}
+            ></sl-progress-bar>
+          </div>
+        ` : nothing}
+
         <div class="harness-list">
           ${this.harnessConfigs.map(hc => {
             const cs = this.imageCheckStatuses.get(hc.id);
@@ -1093,6 +1118,8 @@ export class ScionPageOnboarding extends LitElement {
 
     const finishPull = () => {
       this.imagePulling = false;
+      this.pullIndex = 0;
+      this.pullTotal = 0;
       this.cleanupImageEvents();
       void this.recheckAllImageStatuses();
     };
@@ -1115,6 +1142,11 @@ export class ScionPageOnboarding extends LitElement {
         if (d['image']) {
           const fullImageName = d['image'] as string;
           const status = d['status'] as string;
+
+          if (status !== 'queued' && typeof d['index'] === 'number' && typeof d['total'] === 'number') {
+            this.pullIndex = d['index'] as number;
+            this.pullTotal = d['total'] as number;
+          }
 
           if (status === 'done' || status === 'exists' || status === 'error') {
             completedImages.add(fullImageName);
