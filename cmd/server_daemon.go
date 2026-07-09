@@ -31,6 +31,117 @@ import (
 	"github.com/spf13/cobra"
 )
 
+// appendDaemonBoolFlag forwards a boolean flag to the --foreground daemon child.
+//
+// The child re-runs applyWorkstationDefaults, which re-enables any
+// workstation-defaulted flag (--enable-hub, --enable-runtime-broker,
+// --enable-web, --dev-auth, --auto-provide) that it does not see as explicitly
+// set. So a flag the user explicitly disabled must be forwarded as
+// --flag=<value>, not merely omitted when false — otherwise the child treats it
+// as unset and the workstation default silently flips it back on (e.g.
+// `scion server start --dev-auth=false` would still start with dev-auth
+// enabled). When the flag was not set explicitly, keep the historical bare form
+// (present only when true).
+func appendDaemonBoolFlag(cmd *cobra.Command, args []string, name string, val bool) []string {
+	if cmd.Flags().Changed(name) {
+		return append(args, fmt.Sprintf("--%s=%t", name, val))
+	}
+	if val {
+		return append(args, "--"+name)
+	}
+	return args
+}
+
+// buildDaemonStartArgs constructs the argv for the `server start --foreground`
+// child from the parsed server-start flags/globals. Every flag the user set
+// explicitly is forwarded (bools as --flag=<value> via appendDaemonBoolFlag,
+// string/int flags as --flag=<value> when Changed) so it survives the re-exec;
+// flags left at their defaults are omitted (workstation-defaulted bools keep
+// their historical bare-when-true form).
+func buildDaemonStartArgs(cmd *cobra.Command) []string {
+	daemonArgs := []string{"server", "start", "--foreground"}
+	// --hosted selects the server mode; an explicit --hosted=false must survive
+	// the re-exec too, else a child with mode:"hosted" in config flips back to
+	// hosted and overrides the user's workstation choice. Forward via the helper.
+	daemonArgs = appendDaemonBoolFlag(cmd, daemonArgs, "hosted", hostedMode)
+	// Workstation-defaulted bools must be forwarded as --flag=<value> when set
+	// explicitly, so an explicit disable survives into the --foreground child.
+	// Forwarding "bare when true" alone loses --enable-web=false / --dev-auth=false
+	// etc.: the child sees the flag as unset and applyWorkstationDefaults re-enables
+	// it. See appendDaemonBoolFlag.
+	daemonArgs = appendDaemonBoolFlag(cmd, daemonArgs, "enable-hub", enableHub)
+	daemonArgs = appendDaemonBoolFlag(cmd, daemonArgs, "enable-runtime-broker", enableRuntimeBroker)
+	daemonArgs = appendDaemonBoolFlag(cmd, daemonArgs, "enable-web", enableWeb)
+	daemonArgs = appendDaemonBoolFlag(cmd, daemonArgs, "dev-auth", enableDevAuth)
+	if enableDebug {
+		daemonArgs = append(daemonArgs, "--debug")
+	}
+	daemonArgs = appendDaemonBoolFlag(cmd, daemonArgs, "auto-provide", serverAutoProvide)
+	// Remaining bool flags are not workstation-defaulted, but an explicit value
+	// set at `server start` (daemon mode) is still lost to the child's defaults
+	// unless forwarded. appendDaemonBoolFlag omits them when unset.
+	daemonArgs = appendDaemonBoolFlag(cmd, daemonArgs, "no-auto-migrate", noAutoMigrate)
+	daemonArgs = appendDaemonBoolFlag(cmd, daemonArgs, "enable-test-login", enableTestLogin)
+	daemonArgs = appendDaemonBoolFlag(cmd, daemonArgs, "simulate-remote-broker", simulateRemoteBroker)
+	// Only forward --host when explicitly set. The parent never loads config, so
+	// hubHost holds a default here; forwarding it unconditionally would make the
+	// child treat --host as changed and clobber a config-file host (and skip the
+	// workstation loopback default for the runtime broker). Unset → the child
+	// derives its own default (127.0.0.1 in workstation mode).
+	if cmd.Flags().Changed("host") {
+		daemonArgs = append(daemonArgs, fmt.Sprintf("--host=%s", hubHost))
+	}
+	if cmd.Flags().Changed("port") {
+		daemonArgs = append(daemonArgs, fmt.Sprintf("--port=%d", hubPort))
+	}
+	if cmd.Flags().Changed("runtime-broker-port") {
+		daemonArgs = append(daemonArgs, fmt.Sprintf("--runtime-broker-port=%d", runtimeBrokerPort))
+	}
+	if cmd.Flags().Changed("web-port") {
+		daemonArgs = append(daemonArgs, fmt.Sprintf("--web-port=%d", webPort))
+	}
+	if cmd.Flags().Changed("config") {
+		daemonArgs = append(daemonArgs, fmt.Sprintf("--config=%s", serverConfigPath))
+	}
+	if cmd.Flags().Changed("db") {
+		daemonArgs = append(daemonArgs, fmt.Sprintf("--db=%s", dbURL))
+	}
+	if cmd.Flags().Changed("storage-bucket") {
+		daemonArgs = append(daemonArgs, fmt.Sprintf("--storage-bucket=%s", storageBucket))
+	}
+	if cmd.Flags().Changed("storage-dir") {
+		daemonArgs = append(daemonArgs, fmt.Sprintf("--storage-dir=%s", storageDir))
+	}
+	// String/int flags registered only on serverStartCmd: forward when explicitly
+	// set so they survive the re-exec into the --foreground child rather than
+	// falling back to defaults (e.g. --session-secret would otherwise be
+	// regenerated, --base-url/--admin-emails dropped).
+	if cmd.Flags().Changed("template-cache-dir") {
+		daemonArgs = append(daemonArgs, fmt.Sprintf("--template-cache-dir=%s", templateCacheDir))
+	}
+	if cmd.Flags().Changed("template-cache-max") {
+		daemonArgs = append(daemonArgs, fmt.Sprintf("--template-cache-max=%d", templateCacheMax))
+	}
+	if cmd.Flags().Changed("web-assets-dir") {
+		daemonArgs = append(daemonArgs, fmt.Sprintf("--web-assets-dir=%s", webAssetsDir))
+	}
+	// NOTE: --session-secret is deliberately NOT forwarded. It is a signing
+	// secret, and the daemon argv is both visible in the process list and
+	// persisted to server-args.json (via SaveArgs) for restart. Forwarding it
+	// would expose the secret there; a stable session secret in daemon mode
+	// should be supplied out-of-band (env/config file), not via the child argv.
+	if cmd.Flags().Changed("base-url") {
+		daemonArgs = append(daemonArgs, fmt.Sprintf("--base-url=%s", webBaseURL))
+	}
+	if cmd.Flags().Changed("admin-emails") {
+		daemonArgs = append(daemonArgs, fmt.Sprintf("--admin-emails=%s", adminEmails))
+	}
+	if globalMode {
+		daemonArgs = append(daemonArgs, "--global")
+	}
+	return daemonArgs
+}
+
 // runServerStartOrDaemon handles the server start command. By default it launches
 // the server as a background daemon. When --foreground is set, it runs directly.
 func runServerStartOrDaemon(cmd *cobra.Command, args []string) error {
@@ -86,54 +197,9 @@ func runServerStartOrDaemon(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("failed to find scion executable: %w", err)
 	}
 
-	// Build args for the daemon process — pass through all flags
-	daemonArgs := []string{"server", "start", "--foreground"}
-	if hostedMode {
-		daemonArgs = append(daemonArgs, "--hosted")
-	}
-	if enableHub {
-		daemonArgs = append(daemonArgs, "--enable-hub")
-	}
-	if enableRuntimeBroker {
-		daemonArgs = append(daemonArgs, "--enable-runtime-broker")
-	}
-	if enableWeb {
-		daemonArgs = append(daemonArgs, "--enable-web")
-	}
-	if enableDevAuth {
-		daemonArgs = append(daemonArgs, "--dev-auth")
-	}
-	if enableDebug {
-		daemonArgs = append(daemonArgs, "--debug")
-	}
-	if serverAutoProvide {
-		daemonArgs = append(daemonArgs, "--auto-provide")
-	}
-	daemonArgs = append(daemonArgs, fmt.Sprintf("--host=%s", hubHost))
-	if cmd.Flags().Changed("port") {
-		daemonArgs = append(daemonArgs, fmt.Sprintf("--port=%d", hubPort))
-	}
-	if cmd.Flags().Changed("runtime-broker-port") {
-		daemonArgs = append(daemonArgs, fmt.Sprintf("--runtime-broker-port=%d", runtimeBrokerPort))
-	}
-	if cmd.Flags().Changed("web-port") {
-		daemonArgs = append(daemonArgs, fmt.Sprintf("--web-port=%d", webPort))
-	}
-	if cmd.Flags().Changed("config") {
-		daemonArgs = append(daemonArgs, fmt.Sprintf("--config=%s", serverConfigPath))
-	}
-	if cmd.Flags().Changed("db") {
-		daemonArgs = append(daemonArgs, fmt.Sprintf("--db=%s", dbURL))
-	}
-	if cmd.Flags().Changed("storage-bucket") {
-		daemonArgs = append(daemonArgs, fmt.Sprintf("--storage-bucket=%s", storageBucket))
-	}
-	if cmd.Flags().Changed("storage-dir") {
-		daemonArgs = append(daemonArgs, fmt.Sprintf("--storage-dir=%s", storageDir))
-	}
-	if globalMode {
-		daemonArgs = append(daemonArgs, "--global")
-	}
+	// Build the --foreground child argv, forwarding the flags explicitly set on
+	// `server start` so they survive the re-exec (see buildDaemonStartArgs).
+	daemonArgs := buildDaemonStartArgs(cmd)
 
 	// Capture onboarding state BEFORE starting the daemon — the child process
 	// calls InitGlobal() on startup which creates settings.yaml, so checking
@@ -332,6 +398,14 @@ func runServerRestart(cmd *cobra.Command, args []string) error {
 
 	if daemonArgs == nil {
 		// No saved args — reconstruct from current flags (legacy behavior).
+		// NOTE: these flags are registered on serverStartCmd, not
+		// serverRestartCmd, so during `server restart` the globals stay at
+		// their defaults and this fallback effectively yields just
+		// ["server", "start", "--foreground"]. That is a pre-existing
+		// limitation of the restart path; the daemon-start fix above
+		// (appendDaemonBoolFlag in runServerStart, whose corrected args are
+		// persisted via SaveArgs and reloaded by the normal restart path)
+		// is where explicit disables are honored.
 		daemonArgs = []string{"server", "start", "--foreground"}
 		if enableHub || enableRuntimeBroker || enableWeb {
 			if enableHub {
