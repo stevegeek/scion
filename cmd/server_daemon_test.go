@@ -83,6 +83,8 @@ func TestBuildDaemonStartArgsForwardsExplicitFlags(t *testing.T) {
 
 	c := &cobra.Command{Use: "start", RunE: func(*cobra.Command, []string) error { return nil }}
 	f := c.Flags()
+	f.BoolVar(&hostedMode, "hosted", false, "")
+	f.StringVar(&hubHost, "host", "0.0.0.0", "")
 	f.BoolVar(&enableWeb, "enable-web", false, "")
 	f.BoolVar(&enableDevAuth, "dev-auth", false, "")
 	f.BoolVar(&noAutoMigrate, "no-auto-migrate", false, "")
@@ -96,10 +98,11 @@ func TestBuildDaemonStartArgsForwardsExplicitFlags(t *testing.T) {
 	f.StringVar(&adminEmails, "admin-emails", "", "")
 
 	c.SetArgs([]string{
+		"--hosted=false",     // explicit mode disable must survive the re-exec
 		"--enable-web=false", // explicit workstation-default disable (the core fix)
 		"--no-auto-migrate",
 		"--simulate-remote-broker=true",
-		"--session-secret=s3cr3t",
+		"--session-secret=topsecret", // set, but must NOT be forwarded (signing secret)
 		"--base-url=https://scion.example.com",
 		"--admin-emails=a@x.com,b@y.com",
 		"--template-cache-max=42",
@@ -112,20 +115,40 @@ func TestBuildDaemonStartArgsForwardsExplicitFlags(t *testing.T) {
 
 	assert.Equal(t, []string{"server", "start", "--foreground"}, got[:3])
 	for _, want := range []string{
+		"--hosted=false",
 		"--enable-web=false",
 		"--no-auto-migrate=true", // helper normalizes bare --no-auto-migrate to =true
 		"--simulate-remote-broker=true",
-		"--session-secret=s3cr3t",
 		"--base-url=https://scion.example.com",
 		"--admin-emails=a@x.com,b@y.com",
 		"--template-cache-max=42",
 	} {
 		assert.Contains(t, got, want)
 	}
-	// Unset flags are not forwarded.
+	// Unset flags are not forwarded; --host is guarded by Changed; the session
+	// secret must never reach the child argv / saved-args file.
 	assert.NotContains(t, got, "--enable-test-login")
 	for _, a := range got {
 		assert.False(t, strings.HasPrefix(a, "--web-assets-dir="), "web-assets-dir omitted when unset")
 		assert.False(t, strings.HasPrefix(a, "--template-cache-dir="), "template-cache-dir omitted when unset")
+		assert.False(t, strings.HasPrefix(a, "--host="), "host omitted when not explicitly set")
+		assert.False(t, strings.HasPrefix(a, "--session-secret"), "session-secret never forwarded")
 	}
+	assert.NotContains(t, strings.Join(got, " "), "topsecret", "session secret must not leak into args")
+}
+
+// TestBuildDaemonStartArgsForwardsExplicitHost guards the positive side of the
+// --host fix: an explicitly-set host must still be forwarded (only the
+// unconditional default forwarding was removed).
+func TestBuildDaemonStartArgsForwardsExplicitHost(t *testing.T) {
+	resetServerFlags()
+	defer resetServerFlags()
+
+	c := &cobra.Command{Use: "start", RunE: func(*cobra.Command, []string) error { return nil }}
+	c.Flags().StringVar(&hubHost, "host", "0.0.0.0", "")
+	c.SetArgs([]string{"--host=1.2.3.4"})
+	if err := c.Execute(); err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	assert.Contains(t, buildDaemonStartArgs(c), "--host=1.2.3.4")
 }

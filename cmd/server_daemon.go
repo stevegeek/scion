@@ -60,9 +60,10 @@ func appendDaemonBoolFlag(cmd *cobra.Command, args []string, name string, val bo
 // their historical bare-when-true form).
 func buildDaemonStartArgs(cmd *cobra.Command) []string {
 	daemonArgs := []string{"server", "start", "--foreground"}
-	if hostedMode {
-		daemonArgs = append(daemonArgs, "--hosted")
-	}
+	// --hosted selects the server mode; an explicit --hosted=false must survive
+	// the re-exec too, else a child with mode:"hosted" in config flips back to
+	// hosted and overrides the user's workstation choice. Forward via the helper.
+	daemonArgs = appendDaemonBoolFlag(cmd, daemonArgs, "hosted", hostedMode)
 	// Workstation-defaulted bools must be forwarded as --flag=<value> when set
 	// explicitly, so an explicit disable survives into the --foreground child.
 	// Forwarding "bare when true" alone loses --enable-web=false / --dev-auth=false
@@ -82,7 +83,14 @@ func buildDaemonStartArgs(cmd *cobra.Command) []string {
 	daemonArgs = appendDaemonBoolFlag(cmd, daemonArgs, "no-auto-migrate", noAutoMigrate)
 	daemonArgs = appendDaemonBoolFlag(cmd, daemonArgs, "enable-test-login", enableTestLogin)
 	daemonArgs = appendDaemonBoolFlag(cmd, daemonArgs, "simulate-remote-broker", simulateRemoteBroker)
-	daemonArgs = append(daemonArgs, fmt.Sprintf("--host=%s", hubHost))
+	// Only forward --host when explicitly set. The parent never loads config, so
+	// hubHost holds a default here; forwarding it unconditionally would make the
+	// child treat --host as changed and clobber a config-file host (and skip the
+	// workstation loopback default for the runtime broker). Unset → the child
+	// derives its own default (127.0.0.1 in workstation mode).
+	if cmd.Flags().Changed("host") {
+		daemonArgs = append(daemonArgs, fmt.Sprintf("--host=%s", hubHost))
+	}
 	if cmd.Flags().Changed("port") {
 		daemonArgs = append(daemonArgs, fmt.Sprintf("--port=%d", hubPort))
 	}
@@ -117,9 +125,11 @@ func buildDaemonStartArgs(cmd *cobra.Command) []string {
 	if cmd.Flags().Changed("web-assets-dir") {
 		daemonArgs = append(daemonArgs, fmt.Sprintf("--web-assets-dir=%s", webAssetsDir))
 	}
-	if cmd.Flags().Changed("session-secret") {
-		daemonArgs = append(daemonArgs, fmt.Sprintf("--session-secret=%s", webSessionSecret))
-	}
+	// NOTE: --session-secret is deliberately NOT forwarded. It is a signing
+	// secret, and the daemon argv is both visible in the process list and
+	// persisted to server-args.json (via SaveArgs) for restart. Forwarding it
+	// would expose the secret there; a stable session secret in daemon mode
+	// should be supplied out-of-band (env/config file), not via the child argv.
 	if cmd.Flags().Changed("base-url") {
 		daemonArgs = append(daemonArgs, fmt.Sprintf("--base-url=%s", webBaseURL))
 	}
