@@ -137,6 +137,7 @@ func TestGetHubAccessToken_NoAuth(t *testing.T) {
 	t.Setenv("SCION_DEV_TOKEN", "")
 	t.Setenv("SCION_AUTH_TOKEN", "")
 	t.Setenv("SCION_DEV_TOKEN_FILE", "")
+	t.Setenv("SCION_HUB_TOKEN", "")
 	// Override HOME to prevent finding ~/.scion/dev-token
 	t.Setenv("HOME", tmpDir)
 
@@ -145,4 +146,49 @@ func TestGetHubAccessToken_NoAuth(t *testing.T) {
 	// Should return empty string
 	token := getHubAccessToken(endpoint)
 	assert.Empty(t, token)
+}
+
+func TestGetHubAccessToken_HubTokenEnv(t *testing.T) {
+	// No OAuth credentials.
+	tmpDir := t.TempDir()
+	origPath := credentials.ExportCredentialsPath()
+	credentials.SetCredentialsPath(func() string {
+		return filepath.Join(tmpDir, "credentials.json")
+	})
+	defer credentials.SetCredentialsPath(origPath)
+
+	// A user access token (PAT) in the env, plus a dev token that must NOT win.
+	t.Setenv("SCION_HUB_TOKEN", "scion_pat_env123")
+	t.Setenv("SCION_DEV_TOKEN", "scion_dev_shouldnotuse")
+	t.Setenv("SCION_DEV_TOKEN_FILE", "")
+
+	endpoint := "https://hub.example.com"
+
+	// SCION_HUB_TOKEN is honored, and beats the dev token — matching the REST
+	// hub client. Without this, attach against a dev-auth-off hub driven by
+	// SCION_HUB_TOKEN fails with "no access token found for Hub".
+	token := getHubAccessToken(endpoint)
+	assert.Equal(t, "scion_pat_env123", token)
+}
+
+func TestGetHubAccessToken_OAuthTakesPriorityOverHubToken(t *testing.T) {
+	tmpDir := t.TempDir()
+	origPath := credentials.ExportCredentialsPath()
+	credentials.SetCredentialsPath(func() string {
+		return filepath.Join(tmpDir, "credentials.json")
+	})
+	defer credentials.SetCredentialsPath(origPath)
+
+	endpoint := "https://hub.example.com"
+
+	err := credentials.Store(endpoint, &credentials.TokenResponse{
+		AccessToken: "oauth-wins",
+		ExpiresIn:   1 * time.Hour,
+	})
+	require.NoError(t, err)
+	t.Setenv("SCION_HUB_TOKEN", "scion_pat_shouldnotuse")
+
+	// OAuth still takes priority over the SCION_HUB_TOKEN env.
+	token := getHubAccessToken(endpoint)
+	assert.Equal(t, "oauth-wins", token)
 }
