@@ -599,6 +599,7 @@ export interface RuntimeBroker {
   profiles?: BrokerProfile[];
   autoProvide: boolean;
   endpoint?: string;
+  labels?: Record<string, string>;
   createdBy?: string;
   createdByName?: string;
   createdAt: string;

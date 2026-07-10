@@ -30,6 +30,7 @@ import type { StatusType } from '../shared/status-badge.js';
 import { apiFetch, extractApiError } from '../../client/api.js';
 import { dispatchPageTitle } from '../../client/page-title.js';
 import { stateManager } from '../../client/state.js';
+import { brokerTypeBadgeStyles } from '../shared/resource-styles.js';
 import '../shared/status-badge.js';
 
 interface BrokerProjectInfo {
@@ -66,7 +67,9 @@ export class ScionPageBrokerDetail extends LitElement {
   private boundOnBrokersUpdated = this.onBrokersUpdated.bind(this);
   private relativeTimeInterval: ReturnType<typeof setInterval> | null = null;
 
-  static override styles = css`
+  static override styles = [
+    brokerTypeBadgeStyles,
+    css`
     :host {
       display: block;
     }
@@ -418,7 +421,8 @@ export class ScionPageBrokerDetail extends LitElement {
       color: var(--sl-color-danger-700, #b91c1c);
       margin-bottom: 1rem;
     }
-  `;
+  `,
+  ];
 
   override connectedCallback(): void {
     super.connectedCallback();
@@ -502,6 +506,14 @@ export class ScionPageBrokerDetail extends LitElement {
     } finally {
       this.loading = false;
     }
+  }
+
+  private renderBrokerTypeBadge() {
+    const brokerType = this.broker?.labels?.['scion.io/broker-type'];
+    if (!brokerType) return '';
+    const label = brokerType.charAt(0).toUpperCase() + brokerType.slice(1);
+    const cssClass = brokerType === 'hosted' ? 'broker-type-badge hosted' : 'broker-type-badge';
+    return html`<span class=${cssClass}>${label}</span>`;
   }
 
   private getBrokerStatusVariant(status: string): 'success' | 'warning' | 'danger' | 'neutral' {
@@ -592,6 +604,7 @@ export class ScionPageBrokerDetail extends LitElement {
           <div class="header-title">
             <sl-icon name="hdd-rack"></sl-icon>
             <h1>${this.broker.name}</h1>
+            ${this.renderBrokerTypeBadge()}
             <scion-status-badge
               status=${this.getBrokerStatusVariant(this.broker.status)}
               label=${this.broker.status}

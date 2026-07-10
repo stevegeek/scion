@@ -26,7 +26,7 @@ import { customElement, property, state } from 'lit/decorators.js';
 import type { PageData, RuntimeBroker } from '../../shared/types.js';
 import { stateManager } from '../../client/state.js';
 import { extractApiError } from '../../client/api.js';
-import { listPageStyles } from '../shared/resource-styles.js';
+import { listPageStyles, brokerTypeBadgeStyles } from '../shared/resource-styles.js';
 import type { ViewMode } from '../shared/view-toggle.js';
 import '../shared/status-badge.js';
 import '../shared/view-toggle.js';
@@ -68,6 +68,7 @@ export class ScionPageBrokers extends LitElement {
 
   static override styles = [
     listPageStyles,
+    brokerTypeBadgeStyles,
     css`
       .broker-header {
         display: flex;
@@ -308,6 +309,14 @@ export class ScionPageBrokers extends LitElement {
     `;
   }
 
+  private renderBrokerTypeBadge(broker: RuntimeBroker) {
+    const brokerType = broker.labels?.['scion.io/broker-type'];
+    if (!brokerType) return '';
+    const label = brokerType.charAt(0).toUpperCase() + brokerType.slice(1);
+    const cssClass = brokerType === 'hosted' ? 'broker-type-badge hosted' : 'broker-type-badge';
+    return html`<span class=${cssClass}>${label}</span>`;
+  }
+
   private renderBrokerCard(broker: RuntimeBroker) {
     return html`
       <a href="/brokers/${broker.id}" class="resource-card">
@@ -316,6 +325,7 @@ export class ScionPageBrokers extends LitElement {
             <h3 class="resource-name">
               <sl-icon name="hdd-rack"></sl-icon>
               ${broker.name}
+              ${this.renderBrokerTypeBadge(broker)}
             </h3>
             ${broker.version ? html`<div class="broker-version">v${broker.version}</div>` : ''}
           </div>
@@ -395,6 +405,7 @@ export class ScionPageBrokers extends LitElement {
           <span class="name-cell">
             <sl-icon name="hdd-rack"></sl-icon>
             ${broker.name}
+            ${this.renderBrokerTypeBadge(broker)}
           </span>
         </td>
         <td class="hide-mobile">
