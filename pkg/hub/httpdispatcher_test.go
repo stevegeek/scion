@@ -2149,6 +2149,78 @@ func TestHTTPAgentDispatcher_DispatchAgentCreate_NoProjectSlug_LocalPathProject(
 	}
 }
 
+// TestHTTPAgentDispatcher_DispatchAgentCreate_WorkspaceSubdirSurvivesClear: a
+// relative WorkspaceSubdir reaches the broker even for a local-path project,
+// where the absolute Workspace is cleared — it must not be dropped with it.
+func TestHTTPAgentDispatcher_DispatchAgentCreate_WorkspaceSubdirSurvivesClear(t *testing.T) {
+	ctx := context.Background()
+	memStore := createTestStore(t)
+
+	// Directory (non-git) project reached via a broker with a local path.
+	project := &store.Project{
+		ID:   tid("project-subdir"),
+		Name: "Subdir Project",
+		Slug: "subdir-project",
+	}
+	if err := memStore.CreateProject(ctx, project); err != nil {
+		t.Fatalf("failed to create project: %v", err)
+	}
+
+	broker := &store.RuntimeBroker{
+		ID:       tid("broker-1"),
+		Name:     "test-broker",
+		Slug:     "test-broker",
+		Endpoint: "http://localhost:9800",
+		Status:   store.BrokerStatusOnline,
+	}
+	if err := memStore.CreateRuntimeBroker(ctx, broker); err != nil {
+		t.Fatalf("failed to create runtime broker: %v", err)
+	}
+
+	provider := &store.ProjectProvider{
+		ProjectID:  tid("project-subdir"),
+		BrokerID:   tid("broker-1"),
+		BrokerName: "test-broker",
+		LocalPath:  "/home/user/projects/subdir/.scion",
+		Status:     store.BrokerStatusOnline,
+	}
+	if err := memStore.AddProjectProvider(ctx, provider); err != nil {
+		t.Fatalf("failed to add project provider: %v", err)
+	}
+
+	mockClient := &mockRuntimeBrokerClient{}
+	dispatcher := NewHTTPAgentDispatcherWithClient(memStore, mockClient, false, slog.Default())
+
+	agent := &store.Agent{
+		ID:              tid("agent-1"),
+		Name:            "test-agent",
+		Slug:            "test-agent",
+		ProjectID:       tid("project-subdir"),
+		RuntimeBrokerID: tid("broker-1"),
+		AppliedConfig: &store.AgentAppliedConfig{
+			HarnessConfig:   "claude",
+			Workspace:       "/should/be/cleared",
+			WorkspaceSubdir: "packages/web",
+		},
+	}
+
+	if err := dispatcher.DispatchAgentCreate(ctx, agent); err != nil {
+		t.Fatalf("DispatchAgentCreate failed: %v", err)
+	}
+	if mockClient.lastCreateReq.Config == nil {
+		t.Fatal("expected config to be present")
+	}
+	// The absolute Workspace is cleared for a local-path project...
+	if mockClient.lastCreateReq.Config.Workspace != "" {
+		t.Errorf("expected empty Workspace, got %q", mockClient.lastCreateReq.Config.Workspace)
+	}
+	// ...but the project-relative WorkspaceSubdir must survive to the broker.
+	if mockClient.lastCreateReq.Config.WorkspaceSubdir != "packages/web" {
+		t.Errorf("expected WorkspaceSubdir 'packages/web' to survive, got %q",
+			mockClient.lastCreateReq.Config.WorkspaceSubdir)
+	}
+}
+
 // TestHTTPAgentDispatcher_DispatchAgentCreate_LinkedProjectNoGitRemote verifies
 // that a linked project without a git remote (registered via CLI link, not via
 // git URL) uses the provider's LocalPath rather than being treated as hub-managed.

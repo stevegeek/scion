@@ -340,6 +340,9 @@ func (m *AgentManager) Provision(ctx context.Context, opts api.StartOptions) (*a
 	if opts.GitClone != nil {
 		ctx = api.ContextWithGitClone(ctx, opts.GitClone)
 	}
+	if opts.WorkspaceSubdir != "" {
+		ctx = api.ContextWithWorkspaceSubdir(ctx, opts.WorkspaceSubdir)
+	}
 	if opts.SharedWorkspace {
 		ctx = api.ContextWithSharedWorkspace(ctx)
 	}
@@ -395,6 +398,54 @@ func resolveHarnessConfigDir(ctx context.Context, name, projectPath string, temp
 		return config.LoadHarnessConfigDir(hcPath)
 	}
 	return config.FindHarnessConfigDir(name, projectPath, templatePaths...)
+}
+
+// resolveWorkspaceSubdir joins a project-relative subdir onto base and returns
+// the absolute path to mount, rejecting any escape of base (absolute paths,
+// "..", or symlinks pointing outside). The subdir must already exist.
+func resolveWorkspaceSubdir(base, subdir string) (string, error) {
+	if filepath.IsAbs(subdir) {
+		return "", fmt.Errorf("workspace subdir must be a relative path within the project workspace, got absolute path: %s", subdir)
+	}
+
+	// Cheap "../" reject before any FS access.
+	cleaned := filepath.Clean(subdir)
+	if cleaned == ".." || strings.HasPrefix(cleaned, ".."+string(os.PathSeparator)) {
+		return "", fmt.Errorf("workspace subdir escapes the project workspace: %s", subdir)
+	}
+
+	absBase, err := filepath.Abs(base)
+	if err != nil {
+		return "", fmt.Errorf("failed to resolve project workspace path %s: %w", base, err)
+	}
+	joined := filepath.Join(absBase, cleaned)
+
+	if _, err := os.Stat(joined); err != nil {
+		if os.IsNotExist(err) {
+			return "", fmt.Errorf("workspace subdir does not exist: %s", joined)
+		}
+		return "", fmt.Errorf("failed to stat workspace subdir %s: %w", joined, err)
+	}
+
+	// EvalSymlinks both sides so an in-workspace symlink can't escape.
+	realBase, err := filepath.EvalSymlinks(absBase)
+	if err != nil {
+		return "", fmt.Errorf("failed to resolve project workspace path %s: %w", absBase, err)
+	}
+	realJoined, err := filepath.EvalSymlinks(joined)
+	if err != nil {
+		return "", fmt.Errorf("failed to resolve workspace subdir %s: %w", joined, err)
+	}
+
+	rel, err := filepath.Rel(realBase, realJoined)
+	if err != nil {
+		return "", fmt.Errorf("workspace subdir %s is not within the project workspace %s: %w", subdir, realBase, err)
+	}
+	if rel == ".." || strings.HasPrefix(rel, ".."+string(os.PathSeparator)) || filepath.IsAbs(rel) {
+		return "", fmt.Errorf("workspace subdir escapes the project workspace: %s", subdir)
+	}
+
+	return realJoined, nil
 }
 
 func ProvisionAgent(ctx context.Context, agentName string, templateName string, agentImage string, harnessConfig string, projectPath string, profileName string, optionalStatus string, branch string, workspace string, inlineConfig ...*api.ScionConfig) (string, string, *api.ScionConfig, error) {
@@ -477,6 +528,7 @@ func ProvisionAgent(ctx context.Context, agentName string, templateName string, 
 	var workspaceSource string
 	shouldCreateWorktree := false
 	explicitWorkspace := false
+	subdirApplied := false
 
 	// Check for git clone mode from context
 	gitClone := api.GitCloneFromContext(ctx)
@@ -568,6 +620,25 @@ func ProvisionAgent(ctx context.Context, agentName string, templateName string, 
 			workspaceSource = filepath.Dir(projectDir)
 		}
 		agentWorkspace = "" // Using external mount
+
+		// The only place a caller-supplied within-project subpath is honored —
+		// the feature's security boundary.
+		if subdir := api.WorkspaceSubdirFromContext(ctx); subdir != "" && workspaceSource != "" {
+			resolved, err := resolveWorkspaceSubdir(workspaceSource, subdir)
+			if err != nil {
+				return "", "", nil, err
+			}
+			workspaceSource = resolved
+			// Mark explicit so resume re-derives this subpath, not the project root.
+			explicitWorkspace = true
+			subdirApplied = true
+		}
+	}
+
+	// Requested a subdir but didn't take the Case-3 directory-project branch
+	// (git / explicit --workspace / clone / shared): surface the no-op.
+	if subdir := api.WorkspaceSubdirFromContext(ctx); subdir != "" && !subdirApplied {
+		fmt.Fprintf(os.Stderr, "Warning: --workspace-subdir %q is ignored for this project type (only honored for directory/non-git projects without an explicit --workspace); mounting the default workspace instead\n", subdir)
 	}
 
 	// Worktree Creation (if needed)

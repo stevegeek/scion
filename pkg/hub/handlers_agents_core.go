@@ -75,6 +75,7 @@ type CreateAgentRequest struct {
 	Task            string            `json:"task,omitempty"`
 	Branch          string            `json:"branch,omitempty"`
 	Workspace       string            `json:"workspace,omitempty"`
+	WorkspaceSubdir string            `json:"workspaceSubdir,omitempty"` // Project-relative /workspace subpath; see RemoteAgentConfig.WorkspaceSubdir
 	Labels          map[string]string `json:"labels,omitempty"`
 	Config          *api.ScionConfig  `json:"config,omitempty"`
 	Attach          bool              `json:"attach,omitempty"`        // If true, signals interactive attach mode to the broker/harness

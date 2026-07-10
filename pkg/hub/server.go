@@ -467,17 +467,21 @@ type ResolvedSecret struct {
 
 // RemoteAgentConfig contains agent configuration for remote creation.
 type RemoteAgentConfig struct {
-	Template      string   `json:"template,omitempty"`
-	Image         string   `json:"image,omitempty"`
-	HomeDir       string   `json:"homeDir,omitempty"`
-	Workspace     string   `json:"workspace,omitempty"`
-	Env           []string `json:"env,omitempty"`
-	Task          string   `json:"task,omitempty"`
-	CommandArgs   []string `json:"commandArgs,omitempty"`
-	HarnessConfig string   `json:"harnessConfig,omitempty"` // Resolved harness config name for env-gather
-	HarnessAuth   string   `json:"harnessAuth,omitempty"`   // Late-binding override for auth_selected_type
-	Profile       string   `json:"profile,omitempty"`       // Settings profile for the runtime broker
-	Branch        string   `json:"branch,omitempty"`        // Git branch name (defaults to agent slug if empty)
+	Template  string `json:"template,omitempty"`
+	Image     string `json:"image,omitempty"`
+	HomeDir   string `json:"homeDir,omitempty"`
+	Workspace string `json:"workspace,omitempty"`
+	// WorkspaceSubdir is a project-relative /workspace subpath (directory/non-git
+	// projects). Unlike the absolute Workspace, which the hub rewrites to the
+	// project root, it survives to the broker, which joins it under a guard.
+	WorkspaceSubdir string   `json:"workspaceSubdir,omitempty"`
+	Env             []string `json:"env,omitempty"`
+	Task            string   `json:"task,omitempty"`
+	CommandArgs     []string `json:"commandArgs,omitempty"`
+	HarnessConfig   string   `json:"harnessConfig,omitempty"` // Resolved harness config name for env-gather
+	HarnessAuth     string   `json:"harnessAuth,omitempty"`   // Late-binding override for auth_selected_type
+	Profile         string   `json:"profile,omitempty"`       // Settings profile for the runtime broker
+	Branch          string   `json:"branch,omitempty"`        // Git branch name (defaults to agent slug if empty)
 
 	// TemplateID is the Hub template ID for cache lookup on the Runtime Broker.
 	// When provided, the Runtime Broker can use this to fetch the template

@@ -79,14 +79,15 @@ func (s *Server) getHarnessConfigFromTemplate(template *store.Template, fallback
 // and the full ScionConfig is preserved as InlineConfig for threading to the broker.
 func (s *Server) buildAppliedConfig(req CreateAgentRequest, harnessConfig string, creatorName string) *store.AgentAppliedConfig {
 	ac := &store.AgentAppliedConfig{
-		Profile:       req.Profile,
-		HarnessConfig: harnessConfig,
-		HarnessAuth:   req.HarnessAuth,
-		Task:          req.Task,
-		Attach:        req.Attach,
-		Branch:        req.Branch,
-		Workspace:     req.Workspace,
-		CreatorName:   creatorName,
+		Profile:         req.Profile,
+		HarnessConfig:   harnessConfig,
+		HarnessAuth:     req.HarnessAuth,
+		Task:            req.Task,
+		Attach:          req.Attach,
+		Branch:          req.Branch,
+		Workspace:       req.Workspace,
+		WorkspaceSubdir: req.WorkspaceSubdir,
+		CreatorName:     creatorName,
 	}
 
 	ac.NoAuth = req.NoAuth

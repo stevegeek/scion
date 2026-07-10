@@ -384,6 +384,7 @@ func (s *Server) buildStartContext(ctx context.Context, in startContextInputs) (
 		opts.HarnessAuth = in.Config.HarnessAuth
 		opts.Task = in.Config.Task
 		opts.Workspace = in.Config.Workspace
+		opts.WorkspaceSubdir = in.Config.WorkspaceSubdir
 		opts.Profile = in.Config.Profile
 		opts.Branch = in.Config.Branch
 		opts.SharedWorkspace = in.Config.SharedWorkspace

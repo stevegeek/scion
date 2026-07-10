@@ -122,6 +122,9 @@ func (m *AgentManager) Start(ctx context.Context, opts api.StartOptions) (*api.A
 	if opts.GitClone != nil {
 		ctx = api.ContextWithGitClone(ctx, opts.GitClone)
 	}
+	if opts.WorkspaceSubdir != "" {
+		ctx = api.ContextWithWorkspaceSubdir(ctx, opts.WorkspaceSubdir)
+	}
 	if opts.HarnessConfigPath != "" {
 		ctx = api.ContextWithHarnessConfigPath(ctx, opts.HarnessConfigPath)
 	}

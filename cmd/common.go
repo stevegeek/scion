@@ -66,6 +66,7 @@ var (
 	attach                bool
 	branch                string
 	workspace             string
+	workspaceSubdir       string
 	runtimeBrokerID       string
 	harnessConfigFlag     string
 	harnessAuthFlag       string
@@ -510,20 +511,21 @@ func RunAgent(cmd *cobra.Command, args []string, resume bool) error {
 	}
 
 	opts := api.StartOptions{
-		Name:          agentName,
-		Task:          effectiveTask,
-		Template:      templateName,
-		Profile:       profile,
-		HarnessConfig: effectiveHarnessConfig,
-		HarnessAuth:   effectiveHarnessAuth,
-		Image:         resolvedImage,
-		ProjectPath:   projectPath,
-		Resume:        effectiveResume,
-		Detached:      detached,
-		NoAuth:        noAuth,
-		Branch:        effectiveBranch,
-		Workspace:     workspace,
-		InlineConfig:  inlineCfg,
+		Name:            agentName,
+		Task:            effectiveTask,
+		Template:        templateName,
+		Profile:         profile,
+		HarnessConfig:   effectiveHarnessConfig,
+		HarnessAuth:     effectiveHarnessAuth,
+		Image:           resolvedImage,
+		ProjectPath:     projectPath,
+		Resume:          effectiveResume,
+		Detached:        detached,
+		NoAuth:          noAuth,
+		Branch:          effectiveBranch,
+		Workspace:       workspace,
+		WorkspaceSubdir: workspaceSubdir,
+		InlineConfig:    inlineCfg,
 	}
 
 	// Apply telemetry override from CLI flags
@@ -720,6 +722,7 @@ func startAgentViaHub(hubCtx *HubContext, agentName, task string, resume bool, i
 		Task:            task,
 		Branch:          branch,
 		Workspace:       workspace,
+		WorkspaceSubdir: workspaceSubdir,
 		Labels:          parsedLabels,
 		Resume:          resume,
 		Attach:          attach,

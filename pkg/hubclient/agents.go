@@ -168,6 +168,7 @@ type CreateAgentRequest struct {
 	Task            string            `json:"task,omitempty"`
 	Branch          string            `json:"branch,omitempty"`
 	Workspace       string            `json:"workspace,omitempty"`
+	WorkspaceSubdir string            `json:"workspaceSubdir,omitempty"` // Project-relative /workspace subpath (directory/non-git projects)
 	Labels          map[string]string `json:"labels,omitempty"`
 	Annotations     map[string]string `json:"annotations,omitempty"`
 	Config          *api.ScionConfig  `json:"config,omitempty"`

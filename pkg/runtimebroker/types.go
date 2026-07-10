@@ -374,22 +374,23 @@ func (r CreateAgentRequest) MarshalJSON() ([]byte, error) {
 
 // CreateAgentConfig contains configuration for agent creation.
 type CreateAgentConfig struct {
-	Template      string                `json:"template,omitempty"`
-	Image         string                `json:"image,omitempty"`
-	HomeDir       string                `json:"homeDir,omitempty"`
-	Workspace     string                `json:"workspace,omitempty"`
-	RepoRoot      string                `json:"repoRoot,omitempty"`
-	Env           []string              `json:"env,omitempty"`
-	Volumes       []api.VolumeMount     `json:"volumes,omitempty"`
-	Labels        map[string]string     `json:"labels,omitempty"`
-	Annotations   map[string]string     `json:"annotations,omitempty"`
-	HarnessConfig string                `json:"harnessConfig,omitempty"`
-	HarnessAuth   string                `json:"harnessAuth,omitempty"` // Late-binding override for auth_selected_type
-	Task          string                `json:"task,omitempty"`
-	CommandArgs   []string              `json:"commandArgs,omitempty"`
-	Profile       string                `json:"profile,omitempty"` // Settings profile for the runtime broker
-	Branch        string                `json:"branch,omitempty"`  // Git branch name (defaults to agent slug if empty)
-	Kubernetes    *api.KubernetesConfig `json:"kubernetes,omitempty"`
+	Template        string                `json:"template,omitempty"`
+	Image           string                `json:"image,omitempty"`
+	HomeDir         string                `json:"homeDir,omitempty"`
+	Workspace       string                `json:"workspace,omitempty"`
+	WorkspaceSubdir string                `json:"workspaceSubdir,omitempty"` // Project-relative /workspace subpath; see hub.RemoteAgentConfig.WorkspaceSubdir
+	RepoRoot        string                `json:"repoRoot,omitempty"`
+	Env             []string              `json:"env,omitempty"`
+	Volumes         []api.VolumeMount     `json:"volumes,omitempty"`
+	Labels          map[string]string     `json:"labels,omitempty"`
+	Annotations     map[string]string     `json:"annotations,omitempty"`
+	HarnessConfig   string                `json:"harnessConfig,omitempty"`
+	HarnessAuth     string                `json:"harnessAuth,omitempty"` // Late-binding override for auth_selected_type
+	Task            string                `json:"task,omitempty"`
+	CommandArgs     []string              `json:"commandArgs,omitempty"`
+	Profile         string                `json:"profile,omitempty"` // Settings profile for the runtime broker
+	Branch          string                `json:"branch,omitempty"`  // Git branch name (defaults to agent slug if empty)
+	Kubernetes      *api.KubernetesConfig `json:"kubernetes,omitempty"`
 
 	// TemplateID is the Hub template ID for cache lookup.
 	// When provided, the Runtime Broker can use this to look up or fetch

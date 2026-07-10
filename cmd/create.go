@@ -109,16 +109,17 @@ arguments are provided, an empty prompt.md is created for later editing.`,
 		}
 
 		opts := api.StartOptions{
-			Name:          agentName,
-			Task:          effectiveTask,
-			Template:      templateName,
-			Profile:       profile,
-			HarnessConfig: effectiveHarnessConfig,
-			Image:         effectiveImage,
-			ProjectPath:   projectPath,
-			Branch:        effectiveBranch,
-			Workspace:     workspace,
-			InlineConfig:  inlineCfg,
+			Name:            agentName,
+			Task:            effectiveTask,
+			Template:        templateName,
+			Profile:         profile,
+			HarnessConfig:   effectiveHarnessConfig,
+			Image:           effectiveImage,
+			ProjectPath:     projectPath,
+			Branch:          effectiveBranch,
+			Workspace:       workspace,
+			WorkspaceSubdir: workspaceSubdir,
+			InlineConfig:    inlineCfg,
 		}
 
 		// Check if agent already exists (directory on disk or running container)
@@ -323,6 +324,7 @@ func init() {
 	createCmd.Flags().StringVarP(&agentImage, "image", "i", "", "Container image to use (overrides template)")
 	createCmd.Flags().StringVarP(&branch, "branch", "b", "", "Git branch to use for the agent workspace")
 	createCmd.Flags().StringVarP(&workspace, "workspace", "w", "", "Host path to mount as /workspace")
+	createCmd.Flags().StringVar(&workspaceSubdir, "workspace-subdir", "", "Project-relative subpath to mount at /workspace (directory/non-git projects)")
 	createCmd.Flags().StringVar(&runtimeBrokerID, "broker", "", "Preferred runtime broker ID or name")
 	createCmd.Flags().StringVar(&harnessConfigFlag, "harness-config", "", "Named harness configuration to use")
 	createCmd.Flags().StringVar(&harnessConfigFlag, "harness", "h", "Named harness configuration to use (alias for --harness-config)")

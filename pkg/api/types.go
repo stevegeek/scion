@@ -756,6 +756,20 @@ func GitCloneFromContext(ctx context.Context) *GitCloneConfig {
 	return gc
 }
 
+type workspaceSubdirContextKey struct{}
+
+// ContextWithWorkspaceSubdir carries a requested per-agent workspace subdir
+// (project-relative) for ProvisionAgent to consume.
+func ContextWithWorkspaceSubdir(ctx context.Context, subdir string) context.Context {
+	return context.WithValue(ctx, workspaceSubdirContextKey{}, subdir)
+}
+
+// WorkspaceSubdirFromContext returns the requested subdir, or "" if unset.
+func WorkspaceSubdirFromContext(ctx context.Context) string {
+	v, _ := ctx.Value(workspaceSubdirContextKey{}).(string)
+	return v
+}
+
 type sharedWorkspaceContextKey struct{}
 
 // ContextWithSharedWorkspace returns a new context with the shared workspace flag attached.
@@ -830,6 +844,7 @@ type StartOptions struct {
 	NoAuth            bool
 	Branch            string
 	Workspace         string
+	WorkspaceSubdir   string          // Project-relative /workspace subpath (directory/non-git projects), guarded within the project root
 	GitClone          *GitCloneConfig // When set, skip workspace creation; sciontool clones inside container
 	SharedWorkspace   bool            // When true, workspace is a shared git clone (git-workspace hybrid); skip worktree, configure credential helper
 	TelemetryOverride *bool           // Explicit telemetry override from CLI flags (--enable-telemetry / --disable-telemetry)
