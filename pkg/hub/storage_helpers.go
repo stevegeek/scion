@@ -21,6 +21,7 @@ import (
 	"net/http"
 	"os"
 	"strings"
+	"sync"
 	"time"
 
 	"golang.org/x/sync/errgroup"
@@ -29,6 +30,8 @@ import (
 	"github.com/GoogleCloudPlatform/scion/pkg/store"
 	"github.com/GoogleCloudPlatform/scion/pkg/transfer"
 )
+
+var legacyFallbackWarned sync.Map
 
 // fileUploadConcurrency bounds how many of a resource's files upload at once
 // (Phase 4). Storage backends (GCS / local FS) are safe for concurrent uploads
@@ -223,11 +226,36 @@ func reconcileResourceStorage(ctx context.Context, stor storage.Storage, storage
 	}
 }
 
+// legacyFallbackPath returns the legacy un-namespaced storage path for fallback
+// reads, or "" if legacy fallback is disabled on this server.
+func (s *Server) legacyFallbackPath(path string) string {
+	if !s.LegacyFallbackEnabled() {
+		return ""
+	}
+	return legacyStoragePath(path)
+}
+
+// legacyStoragePath returns the un-namespaced portion of a hub-scoped storage
+// path. If the path doesn't start with "hubs/", returns "" (no fallback needed).
+func legacyStoragePath(path string) string {
+	if !strings.HasPrefix(path, "hubs/") {
+		return ""
+	}
+	idx := strings.Index(path[5:], "/")
+	if idx < 0 {
+		return ""
+	}
+	return path[5+idx+1:]
+}
+
 // generateDownloadURLs generates signed GET URLs for files under basePath.
 // Returns the download URL infos, a manifest URL (if possible), the expiry time, and any error.
 // Returns a hard error if signing fails for any listed file — callers must not
 // serve a partial URL list, as that produces opaque hydration failures (issue #373).
-func generateDownloadURLs(ctx context.Context, stor storage.Storage, basePath string, files []store.TemplateFile) ([]DownloadURLInfo, string, time.Time, error) {
+//
+// When legacyBasePath is non-empty and a file is not found at basePath, the
+// function retries signing at legacyBasePath before returning an error.
+func generateDownloadURLs(ctx context.Context, stor storage.Storage, basePath, legacyBasePath string, files []store.TemplateFile) ([]DownloadURLInfo, string, time.Time, error) {
 	downloadURLs := make([]DownloadURLInfo, 0, len(files))
 	expires := time.Now().Add(SignedURLExpiry)
 
@@ -237,6 +265,18 @@ func generateDownloadURLs(ctx context.Context, stor storage.Storage, basePath st
 			Method:  "GET",
 			Expires: SignedURLExpiry,
 		})
+		if err != nil && legacyBasePath != "" {
+			legacyObjectPath := legacyBasePath + "/" + file.Path
+			signedURL, err = stor.GenerateSignedURL(ctx, legacyObjectPath, storage.SignedURLOptions{
+				Method:  "GET",
+				Expires: SignedURLExpiry,
+			})
+			if err == nil {
+				if _, alreadyWarned := legacyFallbackWarned.LoadOrStore(basePath, true); !alreadyWarned {
+					slog.Warn("resource using legacy storage path — run migrate-storage to move to namespaced path", "resource", basePath)
+				}
+			}
+		}
 		if err != nil {
 			return nil, "", expires, fmt.Errorf("storage object missing: %s (run validate to check storage consistency): %w", file.Path, err)
 		}
@@ -256,6 +296,13 @@ func generateDownloadURLs(ctx context.Context, stor storage.Storage, basePath st
 		Method:  "GET",
 		Expires: SignedURLExpiry,
 	})
+	if err != nil && legacyBasePath != "" {
+		legacyManifest := legacyBasePath + "/manifest.json"
+		signedURL, err = stor.GenerateSignedURL(ctx, legacyManifest, storage.SignedURLOptions{
+			Method:  "GET",
+			Expires: SignedURLExpiry,
+		})
+	}
 	if err != nil {
 		return nil, "", expires, fmt.Errorf("storage object missing: manifest.json (run validate to check storage consistency): %w", err)
 	}
