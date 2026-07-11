@@ -61,9 +61,10 @@ func TestGetHubAccessToken_DevTokenFallback(t *testing.T) {
 	})
 	defer credentials.SetCredentialsPath(origPath)
 
-	// Set a dev token via env var
+	// Set a dev token via env var; clear SCION_HUB_TOKEN, which outranks it
 	t.Setenv("SCION_DEV_TOKEN", "scion_dev_test123")
 	t.Setenv("SCION_DEV_TOKEN_FILE", "")
+	t.Setenv("SCION_HUB_TOKEN", "")
 
 	endpoint := "https://hub.example.com"
 
@@ -81,9 +82,11 @@ func TestGetHubAccessToken_DevTokenFileFallback(t *testing.T) {
 	})
 	defer credentials.SetCredentialsPath(origPath)
 
-	// Clear env-based dev token (including v1 settings env var)
+	// Clear env-based dev token (including v1 settings env var) and
+	// SCION_HUB_TOKEN, which outranks the dev-token file
 	t.Setenv("SCION_DEV_TOKEN", "")
 	t.Setenv("SCION_AUTH_TOKEN", "")
+	t.Setenv("SCION_HUB_TOKEN", "")
 
 	// Set up a dev token file
 	tokenFile := filepath.Join(tmpDir, "dev-token")
