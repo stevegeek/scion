@@ -637,8 +637,13 @@ func ProvisionAgent(ctx context.Context, agentName string, templateName string, 
 
 	// Requested a subdir but didn't take the Case-3 directory-project branch
 	// (git / explicit --workspace / clone / shared): surface the no-op.
+	var subdirWarning string
 	if subdir := api.WorkspaceSubdirFromContext(ctx); subdir != "" && !subdirApplied {
-		fmt.Fprintf(os.Stderr, "Warning: --workspace-subdir %q is ignored for this project type (only honored for directory/non-git projects without an explicit --workspace); mounting the default workspace instead\n", subdir)
+		subdirWarning = fmt.Sprintf("--workspace-subdir %q is ignored for this project type (only honored for directory/non-git projects without an explicit --workspace); mounting the default workspace instead", subdir)
+		// Stderr is the only surface a local (--no-hub) user sees; the copy on
+		// info.Warnings below is for hub/broker consumers, which never see this
+		// process's stderr. No path echoes both, so this never double-prints.
+		fmt.Fprintf(os.Stderr, "Warning: %s\n", subdirWarning)
 	}
 
 	// Worktree Creation (if needed)
@@ -1193,6 +1198,11 @@ func ProvisionAgent(ctx context.Context, agentName string, templateName string, 
 	}
 	if agentImage != "" {
 		info.Image = agentImage
+	}
+	// Carry the ignored-subdir warning into AgentInfo (and agent-info.json) so
+	// hub-dispatched provisioning surfaces it beyond the broker's stderr.
+	if subdirWarning != "" {
+		info.Warnings = append(info.Warnings, subdirWarning)
 	}
 
 	agentCfgData, err := json.MarshalIndent(finalScionCfg, "", "  ")

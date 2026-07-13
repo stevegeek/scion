@@ -20,6 +20,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
 
 	"github.com/GoogleCloudPlatform/scion/pkg/api"
@@ -38,6 +39,18 @@ func workspaceMountSource(cfg *api.ScionConfig) string {
 		}
 	}
 	return ""
+}
+
+// subdirWarnings returns the ignored-subdir warnings recorded on the
+// provisioned AgentInfo.
+func subdirWarnings(warnings []string) []string {
+	var out []string
+	for _, w := range warnings {
+		if strings.Contains(w, "--workspace-subdir") {
+			out = append(out, w)
+		}
+	}
+	return out
 }
 
 // TestProvisionAgentWorkspaceSubdir: a within-project subpath survives to the
@@ -90,6 +103,40 @@ func TestProvisionAgentWorkspaceSubdir(t *testing.T) {
 		if evalSrc != wantSub {
 			t.Errorf("mount source = %q, want subdir %q", evalSrc, wantSub)
 		}
+		if cfg.Info == nil {
+			t.Fatal("expected cfg.Info to be set")
+		}
+		if got := subdirWarnings(cfg.Info.Warnings); len(got) != 0 {
+			t.Errorf("honored subdir must carry no ignored-subdir warning, got %v", got)
+		}
+	})
+
+	t.Run("ignored subdir is surfaced in AgentInfo warnings", func(t *testing.T) {
+		// Explicit --workspace wins (Case 1), so the requested subdir is a no-op.
+		ctx := api.ContextWithWorkspaceSubdir(context.Background(), subRel)
+		home, _, cfg, err := ProvisionAgent(ctx, "ignored-agent", "default", "", "", projectScionDir, "", "", "", evalProjectDir)
+		if err != nil {
+			t.Fatalf("ProvisionAgent failed: %v", err)
+		}
+		if cfg.Info == nil {
+			t.Fatal("expected cfg.Info to be set")
+		}
+		if got := subdirWarnings(cfg.Info.Warnings); len(got) != 1 {
+			t.Fatalf("want exactly 1 ignored-subdir warning in cfg.Info.Warnings, got %v", cfg.Info.Warnings)
+		}
+
+		// Persisted agent-info.json (the hub/broker-visible copy) carries it too.
+		raw, err := os.ReadFile(filepath.Join(home, "agent-info.json"))
+		if err != nil {
+			t.Fatalf("read agent-info.json: %v", err)
+		}
+		var persisted api.AgentInfo
+		if err := json.Unmarshal(raw, &persisted); err != nil {
+			t.Fatalf("unmarshal agent-info.json: %v", err)
+		}
+		if got := subdirWarnings(persisted.Warnings); len(got) != 1 {
+			t.Fatalf("want exactly 1 ignored-subdir warning in agent-info.json, got %v", persisted.Warnings)
+		}
 	})
 
 	t.Run("no subdir mounts the project root unchanged", func(t *testing.T) {
@@ -104,6 +151,11 @@ func TestProvisionAgentWorkspaceSubdir(t *testing.T) {
 		evalSrc, _ := filepath.EvalSymlinks(src)
 		if evalSrc != evalProjectDir {
 			t.Errorf("mount source = %q, want project root %q", evalSrc, evalProjectDir)
+		}
+		if cfg.Info != nil {
+			if got := subdirWarnings(cfg.Info.Warnings); len(got) != 0 {
+				t.Errorf("no-subdir provision must carry no ignored-subdir warning, got %v", got)
+			}
 		}
 	})
 
