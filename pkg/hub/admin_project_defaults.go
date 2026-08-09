@@ -113,7 +113,9 @@ func (s *Server) handlePutProjectDefaults(w http.ResponseWriter, r *http.Request
 	}
 
 	// File/SQLite mode: no persistent storage for this section.
-	// Return 501 to signal that writes are not supported.
+	// Return 501 to signal that writes are not supported, and point at the
+	// env opt-out that is available in this mode.
 	writeError(w, http.StatusNotImplemented, "not_implemented",
-		"Updating project defaults is not supported in file/SQLite mode", nil)
+		"Updating project defaults is not supported in file/SQLite mode; set "+
+			EnvProjectDefaultScratchpad+"=false on the hub to disable the default scratchpad shared dir", nil)
 }

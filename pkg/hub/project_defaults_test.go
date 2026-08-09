@@ -131,6 +131,57 @@ func TestDefaultProjectSharedDirs_Disabled(t *testing.T) {
 	}
 }
 
+// --- file/SQLite env opt-out tests ---
+
+func TestDefaultProjectSharedDirs_EnvOptOut(t *testing.T) {
+	// File/SQLite mode (no ops): the env var is the only way to disable the
+	// default, because the DB row and the admin API are both unavailable.
+	for _, raw := range []string{"false", "0", "FALSE"} {
+		t.Run("disabled_"+raw, func(t *testing.T) {
+			t.Setenv(EnvProjectDefaultScratchpad, raw)
+			srv := &Server{}
+			if dirs := srv.defaultProjectSharedDirs(); dirs != nil {
+				t.Errorf("expected nil with %s=%s, got %v", EnvProjectDefaultScratchpad, raw, dirs)
+			}
+		})
+	}
+
+	t.Run("explicit true keeps the scratchpad", func(t *testing.T) {
+		t.Setenv(EnvProjectDefaultScratchpad, "true")
+		srv := &Server{}
+		dirs := srv.defaultProjectSharedDirs()
+		if len(dirs) != 1 || dirs[0].Name != "scratchpad" {
+			t.Errorf("expected [scratchpad], got %v", dirs)
+		}
+	})
+
+	t.Run("unparseable value keeps the compiled default", func(t *testing.T) {
+		t.Setenv(EnvProjectDefaultScratchpad, "maybe")
+		srv := &Server{}
+		dirs := srv.defaultProjectSharedDirs()
+		if len(dirs) != 1 || dirs[0].Name != "scratchpad" {
+			t.Errorf("expected the compiled default [scratchpad], got %v", dirs)
+		}
+	})
+}
+
+func TestDefaultProjectSharedDirs_OpsWinsOverEnv(t *testing.T) {
+	// Postgres mode is unchanged: the DB row decides, the env var is ignored.
+	fakeStore := newFakeHubSettingStore()
+	fakeStore.seed("project_defaults", json.RawMessage(`{"default_scratchpad":true}`))
+	ops := NewOperationalSettings(fakeStore, emptyKoanf(), emptyKoanf())
+	_, _ = ops.Refresh(context.Background())
+
+	t.Setenv(EnvProjectDefaultScratchpad, "false")
+	srv := &Server{}
+	srv.operationalSettings.Store(ops)
+
+	dirs := srv.defaultProjectSharedDirs()
+	if len(dirs) != 1 || dirs[0].Name != "scratchpad" {
+		t.Errorf("env must not override the DB row, got %v", dirs)
+	}
+}
+
 func TestDefaultProjectSharedDirs_SharedDirSpec(t *testing.T) {
 	// Verify the returned SharedDir matches the design spec exactly.
 	srv := &Server{}

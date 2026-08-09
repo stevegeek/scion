@@ -14,7 +14,20 @@
 
 package hub
 
-import "github.com/GoogleCloudPlatform/scion/pkg/api"
+import (
+	"log/slog"
+	"os"
+	"strconv"
+
+	"github.com/GoogleCloudPlatform/scion/pkg/api"
+)
+
+// EnvProjectDefaultScratchpad opts out of the default scratchpad shared dir in
+// file/SQLite mode, where OperationalSettings is not wired and both the
+// project_defaults DB row and the admin API are unavailable. Accepts any value
+// strconv.ParseBool understands. Ignored in postgres mode, where the DB row is
+// the source of truth.
+const EnvProjectDefaultScratchpad = "SCION_PROJECT_DEFAULT_SCRATCHPAD"
 
 // defaultProjectSharedDirs returns the hub-configured default shared dirs
 // for new projects. Returns a scratchpad shared dir when enabled (the
@@ -26,8 +39,17 @@ func (s *Server) defaultProjectSharedDirs() []api.SharedDir {
 
 	if ops := s.GetOperationalSettings(); ops != nil {
 		enabled = ops.ProjectDefaultScratchpad()
+	} else if raw, ok := os.LookupEnv(EnvProjectDefaultScratchpad); ok {
+		// File/SQLite mode: ops is nil, so the DB row and the admin API cannot
+		// reach this default. Honor an explicit env opt-out instead. A value we
+		// cannot parse keeps the compiled default rather than guessing.
+		if v, err := strconv.ParseBool(raw); err == nil {
+			enabled = v
+		} else {
+			slog.Warn("Ignoring unparseable "+EnvProjectDefaultScratchpad,
+				"value", raw, "error", err)
+		}
 	}
-	// File/SQLite mode: ops is nil → compiled default (ON) applies.
 
 	if !enabled {
 		return nil
