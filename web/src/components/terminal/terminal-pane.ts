@@ -34,6 +34,7 @@ import {
 } from '../../client/terminal-sessions.js';
 import { apiFetch, extractApiError } from '../../client/api.js';
 import { dispatchPageTitle } from '../../client/page-title.js';
+import { clampCell, sgrWheel, wheelNotches } from '../../shared/terminal-wheel.js';
 import type { TerminalAgentMetadata } from '../../client/terminal-metadata.js';
 import type { StatusType } from '../shared/status-badge.js';
 import '../shared/status-badge.js';
@@ -222,6 +223,13 @@ export class ScionTerminalPane extends LitElement {
   private _dragCounter = 0;
   private _errorTimer: ReturnType<typeof setTimeout> | null = null;
   private _windowDragOver: ((e: DragEvent) => void) | null = null;
+  /** Aborts the touch-scroll listeners installed on the xterm element. */
+  private touchScrollAbort: AbortController | null = null;
+  /** Whether THIS pane holds a claim on the document overscroll lock. */
+  private _hasLockedOverscroll = false;
+  /** Claims outstanding across panes, and the styles the first one displaced. */
+  private static _overscrollClaims = 0;
+  private static _priorOverscroll: { html: string; body: string } | null = null;
   private _windowDrop: ((e: DragEvent) => void) | null = null;
 
   // Theme: the pane chrome (toolbar, buttons, dialogs, loading/error states)
@@ -454,6 +462,9 @@ export class ScionTerminalPane extends LitElement {
       left: 0;
       right: 0;
       bottom: 0;
+      /* Stop a scroll that reaches the terminal's edge from chaining out to
+         the page, which on iOS is what produces the rubber-band bounce. */
+      overscroll-behavior: contain;
     }
 
     .disconnected-overlay {
@@ -806,11 +817,18 @@ export class ScionTerminalPane extends LitElement {
     // workspace layout.
     document.addEventListener('visibilitychange', this._onDocumentVisibilityChange);
     this.updateFrontmost();
+    this.syncDocumentOverscroll();
     void this.reveal();
   }
 
   override disconnectedCallback(): void {
-    super.disconnectedCallback();
+    try {
+      super.disconnectedCallback();
+    } finally {
+      // finally: a throwing reactive controller would otherwise strand the
+      // claim counter and leave the document locked for the whole session.
+      this.syncDocumentOverscroll();
+    }
     // DOM placement is not session lifetime. The retained owner explicitly closes.
     this.removeEventListener('focusin', this._onFocusIn);
     this.removeEventListener('focusout', this._onFocusOut);
@@ -949,6 +967,46 @@ export class ScionTerminalPane extends LitElement {
       this.removeWindowListeners();
     }
     this.updateFrontmost();
+    this.syncDocumentOverscroll();
+  }
+
+  /**
+   * Stops the PAGE bouncing while a terminal is on screen. The pane's styles
+   * live in its shadow root and cannot reach the document, but the iOS
+   * rubber-band is the document's, so it has to be set here. Held only while
+   * the pane is mounted AND visible: the workspace keeps hidden panes in the
+   * DOM while other pages, which do need to scroll, are shown.
+   *
+   * Claim-counted across panes rather than saved per pane: with several panes
+   * visible, the second would capture 'none' as the prior value and the last
+   * to release would restore it, leaving the SPA unable to scroll.
+   */
+  private syncDocumentOverscroll(): void {
+    if (typeof document === 'undefined') return;
+    const want = this.isConnected && this._visible && !this.disposed;
+    if (want === this._hasLockedOverscroll) return;
+    this._hasLockedOverscroll = want;
+    const html = document.documentElement;
+    const body = document.body;
+    if (want) {
+      if (++ScionTerminalPane._overscrollClaims > 1) return;
+      ScionTerminalPane._priorOverscroll = {
+        html: html.style.overscrollBehaviorY,
+        body: body.style.overscrollBehaviorY,
+      };
+      // Y only: the rubber-band is vertical, and suppressing the x-axis would
+      // also disable two-finger swipe-back navigation on desktop.
+      html.style.overscrollBehaviorY = 'none';
+      body.style.overscrollBehaviorY = 'none';
+      return;
+    }
+    ScionTerminalPane._overscrollClaims = Math.max(0, ScionTerminalPane._overscrollClaims - 1);
+    if (ScionTerminalPane._overscrollClaims > 0) return;
+    const prior = ScionTerminalPane._priorOverscroll;
+    if (!prior) return;
+    html.style.overscrollBehaviorY = prior.html;
+    body.style.overscrollBehaviorY = prior.body;
+    ScionTerminalPane._priorOverscroll = null;
   }
 
   /** Explicit lifetime boundary. Navigation is reserved for the legacy adapter. */
@@ -1115,6 +1173,7 @@ export class ScionTerminalPane extends LitElement {
     this.terminal.open(container);
     const terminal = this.terminal;
     this.enableShiftSelectionOnMac();
+    this.enableTouchWheelScroll();
 
     // Detect active tmux window from OSC 7337 sequence sent by the broker
     // on connect. Format: \033]7337;tmuxwindow=<name>\007
@@ -1385,6 +1444,126 @@ export class ScionTerminalPane extends LitElement {
     };
   }
 
+  /**
+   * Translates a vertical touch drag into wheel events, so an application
+   * holding the wheel (tmux with `mouse on`) has reachable scrollback on a
+   * device that has no wheel to turn and no Ctrl key for copy-mode.
+   *
+   * Only while mouse reporting is ACTIVE: with it off xterm.js already scrolls
+   * its own viewport on touch, and synthesising here would both duplicate that
+   * and inject escape sequences into an application that never asked for them.
+   *
+   * Listeners are bound to an AbortController released in disposeTerminal(),
+   * so they live exactly as long as this pane's xterm element.
+   */
+  private enableTouchWheelScroll(): void {
+    const el = this.terminal?.element;
+    if (!el) return;
+    this.touchScrollAbort?.abort();
+    const abort = new AbortController();
+    this.touchScrollAbort = abort;
+    const { signal } = abort;
+
+    // One notch per row of travel keeps the content under the finger.
+    const rowHeight = (): number => {
+      const rows = this.terminal?.rows ?? 24;
+      return Math.max(8, el.clientHeight / rows);
+    };
+
+    let lastY: number | null = null;
+    let carry = 0;
+    // Decided at touchstart, not on the first move that crosses a row: the
+    // browser begins its own scroll from the very first touchmove.
+    let consuming = false;
+
+    // areMouseEventsActive is true for ANY active protocol and says nothing
+    // about encoding, but sgrWheel only speaks SGR: an app that enabled
+    // mouse reporting without it would be handed a CSI it never negotiated.
+    const mouseActive = (): boolean => {
+      const svc = (
+        this.terminal as
+          | (Terminal & {
+              _core?: {
+                coreMouseService?: {
+                  areMouseEventsActive?: boolean;
+                  activeEncoding?: string;
+                };
+              };
+            })
+          | null
+      )?._core?.coreMouseService;
+      return Boolean(svc?.areMouseEventsActive) && svc?.activeEncoding === 'SGR';
+    };
+
+    const wheel = (up: boolean, touch: Touch): void => {
+      const rect = el.getBoundingClientRect();
+      const cols = this.terminal?.cols ?? 80;
+      const rows = this.terminal?.rows ?? 24;
+      const col = clampCell((touch.clientX - rect.left) / (rect.width / cols), cols);
+      const row = clampCell((touch.clientY - rect.top) / rowHeight(), rows);
+      this.sendData(sgrWheel(up, col, row));
+    };
+
+    el.addEventListener(
+      'touchstart',
+      (ev: TouchEvent): void => {
+        consuming = ev.touches.length === 1 && mouseActive();
+        // touch-action is read when a gesture BEGINS, so this governs the
+        // NEXT one; preventDefault below handles the current one.
+        el.style.touchAction = consuming ? 'none' : '';
+        if (!consuming) return;
+        lastY = ev.touches[0].clientY;
+        carry = 0;
+      },
+      { passive: true, signal }
+    );
+
+    el.addEventListener(
+      'touchmove',
+      (ev: TouchEvent): void => {
+        // A second finger means pinch-zoom, which belongs to the browser.
+        if (ev.touches.length !== 1) {
+          consuming = false;
+          el.style.touchAction = '';
+          return;
+        }
+        if (!consuming || lastY === null) return;
+        // Re-checked per move: an app can drop mouse reporting mid-drag, and
+        // the reports would then land on whatever owns the tty (a shell).
+        if (!mouseActive()) {
+          consuming = false;
+          el.style.touchAction = '';
+          return;
+        }
+
+        // The whole gesture, not just the part that crosses a row: this is
+        // what stops the page moving underneath. Guarded: the first gesture
+        // after mouse reporting turns on can arrive with the browser scroll
+        // already committed, and cancelling that one only logs a warning.
+        if (ev.cancelable) ev.preventDefault();
+
+        const touch = ev.touches[0];
+        carry += lastY - touch.clientY;
+        lastY = touch.clientY;
+
+        const { notches, up, remainder } = wheelNotches(carry, rowHeight());
+        carry = remainder;
+        for (let i = 0; i < notches; i++) wheel(up, touch);
+      },
+      { passive: false, signal }
+    );
+
+    const end = (): void => {
+      lastY = null;
+      carry = 0;
+      consuming = false;
+      // Left set while reporting is on, so it governs the NEXT gesture too.
+      el.style.touchAction = mouseActive() ? 'none' : '';
+    };
+    el.addEventListener('touchend', end, { passive: true, signal });
+    el.addEventListener('touchcancel', end, { passive: true, signal });
+  }
+
   private sendData(data: string): void {
     this.session?.sendData(data);
   }
@@ -1581,6 +1760,7 @@ export class ScionTerminalPane extends LitElement {
     this.closePortDropdown();
     this.removeWindowListeners();
     this.disposeTerminal();
+    this.syncDocumentOverscroll();
     this.wasConnected = false;
   }
 
@@ -1614,6 +1794,8 @@ export class ScionTerminalPane extends LitElement {
   }
 
   private disposeTerminal(): void {
+    this.touchScrollAbort?.abort();
+    this.touchScrollAbort = null;
     this.terminalStyle?.remove();
     this.terminalStyle = null;
     if (this.terminal) {
