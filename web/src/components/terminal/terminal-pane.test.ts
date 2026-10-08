@@ -1249,8 +1249,8 @@ describe('touch-to-wheel scrolling', () => {
     const socket = FakeSocket.instances[0];
     socket.send.mockClear();
     const sent = () =>
-      socket.send.mock.calls.map(
-        ([raw]) => atob((JSON.parse(raw as string) as { data: string }).data) as string
+      socket.send.mock.calls.map(([raw]) =>
+        atob((JSON.parse(raw as string) as { data: string }).data)
       );
 
     // Mouse reporting off: xterm scrolls its own viewport; nothing is sent.
