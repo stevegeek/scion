@@ -142,6 +142,7 @@ const USED_ICONS = [
   'journal-text',
   'bell-fill',
   'key',
+  'keyboard',
   'lightbulb',
   'lightning-charge',
   'link-45deg',
