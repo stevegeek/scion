@@ -154,17 +154,22 @@ export async function currentPanel(page: Page): Promise<string | null> {
  * At narrow toolbar widths (`<= 520px`), the inline chat button moves into the
  * `.toolbar-overflow` dropdown (`sl-menu-item[value="chat"]`); on wider
  * viewports, the inline `button[aria-label="Chat with <agent>"]` stays visible.
+ * In the terminal workspace on a phone (phoneChrome), the pane shows a phone
+ * header instead, and the action is in its `.more-menu` dropdown.
  */
 export async function clickTerminalPaneChatAction(page: Page, agentName: string): Promise<void> {
   const inlineBtn = page.locator(`button[aria-label="Chat with ${agentName}"]:visible`).first();
   const overflowBtn = page.locator('button.toolbar-overflow-btn:visible').first();
-  await expect(inlineBtn.or(overflowBtn)).toBeVisible({ timeout: 15_000 });
+  const phoneMoreBtn = page.locator('.more-menu button[slot="trigger"]:visible').first();
+  await expect(inlineBtn.or(overflowBtn).or(phoneMoreBtn)).toBeVisible({ timeout: 15_000 });
   if (await inlineBtn.isVisible()) {
     await inlineBtn.click();
     return;
   }
-  await overflowBtn.click();
-  const chatItem = page.locator('.toolbar-overflow sl-menu-item[value="chat"]').first();
+  const phone = await phoneMoreBtn.isVisible();
+  await (phone ? phoneMoreBtn : overflowBtn).click();
+  const menu = phone ? '.more-menu' : '.toolbar-overflow';
+  const chatItem = page.locator(`${menu} sl-menu-item[value="chat"]`).first();
   await expect(chatItem).toBeVisible({ timeout: 15_000 });
   await chatItem.click();
 }
